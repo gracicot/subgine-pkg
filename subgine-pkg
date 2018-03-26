@@ -11,10 +11,20 @@ function(print_help)
 endfunction()
 
 cmake_policy(SET CMP0012 NEW)
+cmake_policy(SET CMP0057 NEW)
+
+set(command-list "update" "clean" "prune" "help")
 
 if(${CMAKE_ARGC} LESS 4)
-
+	print_help()
 elseif(${CMAKE_ARGC} EQUAL 4)
+
+if(${CMAKE_ARGV3} STREQUAL "help")
+	print_help()
+elseif(NOT ${CMAKE_ARGV3} IN_LIST command-list)
+	message(FATAL_ERROR "subgine-pkg: '${CMAKE_ARGV3}' is not a subgine-pkg command. See 'subgine-pkg help'")
+else()
+
 macro(ParseJson prefix jsonString)
 	cmake_policy(PUSH)
 
@@ -509,9 +519,7 @@ elseif(${CMAKE_ARGV3} STREQUAL "prune")
 	if(IS_DIRECTORY "${library-path}")
 		file(REMOVE_RECURSE "${library-path}")
 	endif()
-elseif(${CMAKE_ARGV3} STREQUAL "help")
-	print_help()
-else()
-	message(FATAL_ERROR "subgine-pkg: '${CMAKE_ARGV3}' is not a subgine-pkg command. See 'subgine-pkg help'")
+	
+endif()
 endif()
 endif()
