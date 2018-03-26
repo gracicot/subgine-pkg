@@ -82,6 +82,7 @@ end;
 
 [Files]
 Source: "subgine-pkg"; DestDir: "{app}\bin"; Components: subgine_pkg
+Source: "subgine-pkg.cmake"; DestDir: "{app}\bin"; Components: subgine_pkg
 
 [Registry]
 Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; \
