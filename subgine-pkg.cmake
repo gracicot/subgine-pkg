@@ -431,8 +431,16 @@ function(update_dependency dependency)
 		)
 	else()
 		file(REMOVE_RECURSE "${sources-path}/${${dependency}.name}")
+		
+		set(recurse-argument "")
+		if (DEFINED ${dependency}.fetch-submodules)
+			if (${${dependency}.fetch-submodules})
+				set(recurse-argument "--recurse-submodules")
+			endif()
+		endif()
+		
 		execute_process(
-			COMMAND git clone ${${dependency}.repository} ${${dependency}.name}
+			COMMAND git clone ${${dependency}.repository} ${${dependency}.name} ${recurse-argument}
 			WORKING_DIRECTORY ${sources-path}
 		)
 	endif()
