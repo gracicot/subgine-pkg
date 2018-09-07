@@ -1,3 +1,10 @@
+cmake_policy(SET CMP0012 NEW)
+cmake_policy(SET CMP0057 NEW)
+
+#
+# Help Printing
+#
+
 function(print_help)
 	message("usage: subgine-pkg <command> [<args>]")
 	message("")
@@ -8,9 +15,6 @@ function(print_help)
 	message("   prune    Delete all cache, installed packages and fetched sources")
 	message("   help     Print this help")
 endfunction()
-
-cmake_policy(SET CMP0012 NEW)
-cmake_policy(SET CMP0057 NEW)
 
 set(command-list "update" "clean" "prune" "help" "setup")
 
@@ -23,6 +27,10 @@ if(${CMAKE_ARGV3} STREQUAL "help")
 elseif(NOT ${CMAKE_ARGV3} IN_LIST command-list)
 	message(FATAL_ERROR "subgine-pkg: '${CMAKE_ARGV3}' is not a subgine-pkg command. See 'subgine-pkg help'")
 else()
+
+#
+# Json Parser
+#
 
 macro(ParseJson prefix jsonString)
 	cmake_policy(PUSH)
@@ -331,6 +339,10 @@ macro(_sbeMoveToNextNonEmptyCharacter)
 	endif()
 endmacro()
 
+#
+# Environement Validation
+#
+
 set(current-directory "${CMAKE_CURRENT_SOURCE_DIR}")
 
 if(NOT EXISTS "${current-directory}/lockfile.json")
@@ -364,6 +376,10 @@ if (WIN32)
 else()
 	set(used-generator "Unix Makefiles")
 endif()
+
+#
+# Dependency Functions
+#
 
 function(check_dependency_exist dependency)
 	if (NOT IS_DIRECTORY "${installation-path}")
@@ -456,6 +472,25 @@ function(update_dependency dependency)
 		WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
 	)
 	
+	set(recursive-pkg-arg "")
+	if(EXISTS "${sources-path}/${${dependency}.name}/lockfile.json")
+		message("Reading ${${dependency}.name} dependencies...")
+		file(READ "${sources-path}/${${dependency}.name}/lockfile.json" lockfile_content_${${dependency}.name})
+
+		ParseJson(lockfile_${${dependency}.name} "${lockfile_content_${${dependency}.name}}")
+
+		if(NOT "${lockfile_${${dependency}.name}._type}" STREQUAL "object")
+			message(FATAL_ERROR "The lockfile for dependency \"${${dependency}.name}\" must contain a root object")
+		endif()
+		
+		if (NOT DEFINED lockfile_${${dependency}.name}.dependencies)
+			message(FATAL_ERROR "The lockfile for dependency \"${${dependency}.name}\" does not contains dependencies or is invalid")
+		endif()
+		
+		update_dependency_list(lockfile_${${dependency}.name}.dependencies)
+		set(recursive-pkg-arg "-DCMAKE_PREFIX_PATH=${library-path}")
+	endif()
+	
 	if(NOT IS_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}")
 		file(MAKE_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}")
 	endif()
@@ -463,7 +498,7 @@ function(update_dependency dependency)
 	set(options-set ${${dependency}.options})
 	separate_arguments(options-set)
 	execute_process(
-		COMMAND cmake -G "${used-generator}"  .. -DCMAKE_INSTALL_PREFIX=${library-path} ${options-set}
+		COMMAND cmake -G "${used-generator}"  .. ${recursive-pkg-arg} -DCMAKE_INSTALL_PREFIX=${library-path}/${${dependency}.name} ${options-set}
 		WORKING_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}"
 	)
 	
@@ -486,6 +521,39 @@ function(update_dependency dependency)
 	)
 endfunction()
 
+function(update_dependency_list dependency-list)
+	foreach(dependency-id ${${dependency-list}})
+		if(NOT ${${dependency-list}_${dependency-id}._type} STREQUAL "object")
+			message(FATAL_ERROR "The dependency array must only contain objects")
+		endif()
+		if(NOT DEFINED ${dependency-list}_${dependency-id}.name)
+			message(FATAL_ERROR "The dependency number '${dependency-id}' must have a name")
+		endif()
+		if(NOT DEFINED ${dependency-list}_${dependency-id}.target)
+			message(FATAL_ERROR "The dependency '${${dependency-list}_${dependency-id}.name}' must have a target specified")
+		endif()
+		if(NOT DEFINED ${dependency-list}_${dependency-id}.repository)
+			message(FATAL_ERROR "The dependency '${${dependency-list}_${dependency-id}.name}' must have a repository specified")
+		endif()
+		if(NOT DEFINED ${dependency-list}_${dependency-id}.tag AND NOT DEFINED ${dependency-list}_${dependency-id}.branch)
+			message(FATAL_ERROR "The dependency '${${dependency-list}_${dependency-id}.name}' must have a tag or branch specified")
+		endif()
+		
+		check_dependency_exist(${dependency-list}_${dependency-id})
+		
+		if (${check-dependency-${${dependency-list}_${dependency-id}.name}-result})
+			message("${${dependency-list}_${dependency-id}.name} found")
+		else()
+			message("${${dependency-list}_${dependency-id}.name} not found... installing")
+			update_dependency(${dependency-list}_${dependency-id})
+		endif()
+	endforeach()
+endfunction()
+
+#
+# Commands Implementation
+#
+
 if(${CMAKE_ARGV3} STREQUAL "setup")
 	if(DEFINED lockfile.cmake-module-path)
 		set(module-path-setup "list(APPEND CMAKE_MODULE_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/${lockfile.cmake-module-path}\")")
@@ -493,9 +561,7 @@ if(${CMAKE_ARGV3} STREQUAL "setup")
 		set(module-path-setup "")
 	endif()
 	
-	file(WRITE "${current-directory}/subgine-pkg.cmake" "list(APPEND CMAKE_PREFIX_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/${lockfile.installation-path}/${library-directory-name}/\")\n${module-path-setup}\n")
-	
-elseif(${CMAKE_ARGV3} STREQUAL "update")
+	set(cmake-prefix-setup "")
 	if(NOT "${lockfile.dependencies._type}" STREQUAL "array")
 		message(FATAL_ERROR "The lockfile must an an array 'dependencies' member of the root object")
 	endif()
@@ -504,28 +570,14 @@ elseif(${CMAKE_ARGV3} STREQUAL "update")
 		if(NOT ${lockfile.dependencies_${dependency-id}._type} STREQUAL "object")
 			message(FATAL_ERROR "The dependency array must only contain objects")
 		endif()
-		if(NOT DEFINED lockfile.dependencies_${dependency-id}.name)
-			message(FATAL_ERROR "The dependency number '${dependency-id}' must have a name")
-		endif()
-		if(NOT DEFINED lockfile.dependencies_${dependency-id}.target)
-			message(FATAL_ERROR "The dependency '${lockfile.dependencies_${dependency-id}.name}' must have a target specified")
-		endif()
-		if(NOT DEFINED lockfile.dependencies_${dependency-id}.repository)
-			message(FATAL_ERROR "The dependency '${lockfile.dependencies_${dependency-id}.name}' must have a repository specified")
-		endif()
-		if(NOT DEFINED lockfile.dependencies_${dependency-id}.tag AND NOT DEFINED lockfile.dependencies_${dependency-id}.branch)
-			message(FATAL_ERROR "The dependency '${lockfile.dependencies_${dependency-id}.name}' must have a tag or branch specified")
-		endif()
 		
-		check_dependency_exist(lockfile.dependencies_${dependency-id})
-		
-		if (${check-dependency-${lockfile.dependencies_${dependency-id}.name}-result})
-			message("${lockfile.dependencies_${dependency-id}.name} found")
-		else()
-			message("${lockfile.dependencies_${dependency-id}.name} not found... installing")
-			update_dependency(lockfile.dependencies_${dependency-id})
-		endif()
+		string(APPEND cmake-prefix-setup "list(APPEND CMAKE_PREFIX_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/${lockfile.installation-path}/${library-directory-name}/${lockfile.dependencies_${dependency-id}.name}/\")\n")
 	endforeach()
+	
+	file(WRITE "${current-directory}/subgine-pkg.cmake" "${cmake-prefix-setup}\n${module-path-setup}\n")
+	
+elseif(${CMAKE_ARGV3} STREQUAL "update")
+	update_dependency_list(lockfile.dependencies)
 	
 elseif(${CMAKE_ARGV3} STREQUAL "clean")
 	if(NOT "${lockfile.dependencies._type}" STREQUAL "array")
