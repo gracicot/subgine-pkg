@@ -472,6 +472,13 @@ function(update_dependency dependency)
 		WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
 	)
 	
+	if (DEFINED ${dependency}.branch)
+		execute_process(
+			COMMAND git pull
+			WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
+		)
+	endif()
+	
 	set(recursive-pkg-arg "")
 	if(EXISTS "${sources-path}/${${dependency}.name}/lockfile.json")
 		message("Reading ${${dependency}.name} dependencies...")
@@ -489,36 +496,39 @@ function(update_dependency dependency)
 		
 		update_dependency_list(lockfile_${${dependency}.name}.dependencies)
 		set(recursive-pkg-arg "-DCMAKE_PREFIX_PATH=${library-path}")
+		check_dependency_exist(${dependency})
 	endif()
 	
-	if(NOT IS_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}")
-		file(MAKE_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}")
-	endif()
-	
-	set(options-set ${${dependency}.options})
-	separate_arguments(options-set)
-	execute_process(
-		COMMAND cmake -G "${used-generator}"  .. ${recursive-pkg-arg} -DCMAKE_INSTALL_PREFIX=${library-path}/${${dependency}.name} ${options-set}
-		WORKING_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}"
-	)
-	
-	if(WIN32)
-		set(additional-flags "")
-	else()
-		include(ProcessorCount)
-		ProcessorCount(cores)
-		if(NOT ${cores} EQUAL 0)
-			set(additional-flags "-- -j${cores}")
-			separate_arguments(additional-flags)
-		else()
-			set(additional-flags "")
+	if ("${recursive-pkg-arg}" STREQUAL "" OR NOT ${check-dependency-${${dependency}.name}-result})
+		if(NOT IS_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}")
+			file(MAKE_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}")
 		endif()
+		
+		set(options-set ${${dependency}.options})
+		separate_arguments(options-set)
+		execute_process(
+			COMMAND cmake -G "${used-generator}"  .. ${recursive-pkg-arg} -DCMAKE_INSTALL_PREFIX=${library-path} ${options-set}
+			WORKING_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}"
+		)
+		
+		if(WIN32)
+			set(additional-flags "")
+		else()
+			include(ProcessorCount)
+			ProcessorCount(cores)
+			if(NOT ${cores} EQUAL 0)
+				set(additional-flags "-- -j${cores}")
+				separate_arguments(additional-flags)
+			else()
+				set(additional-flags "")
+			endif()
+		endif()
+		
+		execute_process(
+			COMMAND cmake --build . --target install ${additional-flags}
+			WORKING_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}"
+		)
 	endif()
-	
-	execute_process(
-		COMMAND cmake --build . --target install ${additional-flags}
-		WORKING_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}"
-	)
 endfunction()
 
 function(update_dependency_list dependency-list)
@@ -571,7 +581,7 @@ if(${CMAKE_ARGV3} STREQUAL "setup")
 			message(FATAL_ERROR "The dependency array must only contain objects")
 		endif()
 		
-		string(APPEND cmake-prefix-setup "list(APPEND CMAKE_PREFIX_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/${lockfile.installation-path}/${library-directory-name}/${lockfile.dependencies_${dependency-id}.name}/\")\n")
+		string(APPEND cmake-prefix-setup "list(APPEND CMAKE_PREFIX_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/${lockfile.installation-path}/${library-directory-name}/\")\n")
 	endforeach()
 	
 	file(WRITE "${current-directory}/subgine-pkg.cmake" "${cmake-prefix-setup}\n${module-path-setup}\n")
