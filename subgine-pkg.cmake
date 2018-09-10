@@ -9,15 +9,15 @@ function(print_help)
 	message("usage: subgine-pkg <command> [<args>]")
 	message("")
 	message("Avalable commands:")
-	message("   setup         Create the subgine-pkg.cmake file")
-	message("   update        Fetch and install dependencies")
-	message("   update-local  Update branch based locally installed packages")
-	message("   clean         Clean all build and cache directories")
-	message("   prune         Delete all cache, installed packages and fetched sources")
-	message("   help          Print this help")
+	message("   setup    Create the subgine-pkg.cmake file")
+	message("   install  Fetch and install dependencies")
+	message("   update   Install and update local dependencies")
+	message("   clean    Clean all build and cache directories")
+	message("   prune    Delete all cache, installed packages and fetched sources")
+	message("   help     Print this help")
 endfunction()
 
-set(command-list "update" "clean" "prune" "help" "setup" "update-local")
+set(command-list "update" "clean" "prune" "help" "setup" "install")
 
 if(${CMAKE_ARGC} LESS 4)
 	print_help()
@@ -546,9 +546,18 @@ function(build_dependency dependency)
 	endif()
 	
 	execute_process(
-		COMMAND cmake --build . --target install ${additional-flags}
+		COMMAND cmake --build . ${additional-flags}
 		WORKING_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}"
 	)
+	
+	check_dependency_exist(${dependency})
+	
+	if (NOT ${check-dependency-${${dependency}.name}-result})
+		execute_process(
+			COMMAND cmake --build . --target install ${additional-flags}
+			WORKING_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}"
+		)
+	endif()
 endfunction()
 
 function(update_dependency_list dependency-list)
@@ -571,8 +580,8 @@ function(update_dependency_list dependency-list)
 endfunction()
 
 function(update_local_dependency_list dependency-list)
-	foreach(dependency-id ${lockfile.dependencies})
-		set(dependency lockfile.dependencies_${dependency-id})
+	foreach(dependency-id ${${dependency-list}})
+		set(dependency ${dependency-list}_${dependency-id})
 		if(NOT ${${dependency}._type} STREQUAL "object")
 			message(FATAL_ERROR "The dependency array must only contain objects")
 		endif()
@@ -583,12 +592,10 @@ function(update_local_dependency_list dependency-list)
 
 	file(READ "${test-path}/CMakeCache.txt" test-cache)
 
-	foreach(dependency-id ${lockfile.dependencies})
-		set(dependency lockfile.dependencies_${dependency-id})
+	foreach(dependency-id ${${dependency-list}})
+		set(dependency ${dependency-list}_${dependency-id})
 		if (${check-dependency-${${dependency}.name}-result})
 			update_local_dependency(${dependency})
-		else()
-			message("${${dependency}.name} not found... skipping")
 		endif()
 	endforeach()
 	
@@ -618,8 +625,6 @@ function(update_local_dependency dependency)
 					else()
 						message("${${dependency}.name} already up to date")
 					endif()
-				else()
-					message("${${dependency}.name} found externally at ${dependency-path}")
 				endif()
 			endif()
 		endif()
@@ -638,7 +643,7 @@ function(update_local_dependency dependency)
 			message(FATAL_ERROR "The lockfile for dependency \"${${dependency}.name}\" does not contains dependencies or is invalid")
 		endif()
 		
-		update_local_dependency_list(lockfile_${${dependency}.name})
+		update_local_dependency_list(lockfile_${${dependency}.name}.dependencies)
 	endif()
 endfunction()
 
@@ -668,9 +673,9 @@ if(${CMAKE_ARGV3} STREQUAL "setup")
 	
 	file(WRITE "${current-directory}/subgine-pkg.cmake" "${cmake-prefix-setup}\n${module-path-setup}\n")
 	
-elseif(${CMAKE_ARGV3} STREQUAL "update")
+elseif(${CMAKE_ARGV3} STREQUAL "install")
 	update_dependency_list(lockfile.dependencies)
-elseif(${CMAKE_ARGV3} STREQUAL "update-local")
+elseif(${CMAKE_ARGV3} STREQUAL "update")
 	update_local_dependency_list(lockfile.dependencies)
 elseif(${CMAKE_ARGV3} STREQUAL "clean")
 	if(NOT "${lockfile.dependencies._type}" STREQUAL "array")
