@@ -9,14 +9,15 @@ function(print_help)
 	message("usage: subgine-pkg <command> [<args>]")
 	message("")
 	message("Avalable commands:")
-	message("   setup    Create the subgine-pkg.cmake file")
-	message("   update   Fetch and install dependencies")
-	message("   clean    Clean all build and cache directories")
-	message("   prune    Delete all cache, installed packages and fetched sources")
-	message("   help     Print this help")
+	message("   setup         Create the subgine-pkg.cmake file")
+	message("   update        Fetch and install dependencies")
+	message("   update-local  Update branch based locally installed packages")
+	message("   clean         Clean all build and cache directories")
+	message("   prune         Delete all cache, installed packages and fetched sources")
+	message("   help          Print this help")
 endfunction()
 
-set(command-list "update" "clean" "prune" "help" "setup")
+set(command-list "update" "clean" "prune" "help" "setup" "update-local")
 
 if(${CMAKE_ARGC} LESS 4)
 	print_help()
@@ -381,6 +382,21 @@ endif()
 # Dependency Functions
 #
 
+function(assert_dependency_json_valid dependency)
+	if(NOT DEFINED ${dependency}.name)
+		message(FATAL_ERROR "The dependency '${dependency}' must have a name")
+	endif()
+	if(NOT DEFINED ${dependency}.target)
+		message(FATAL_ERROR "The dependency '${${dependency}.name}' must have a target specified")
+	endif()
+	if(NOT DEFINED ${dependency}.repository)
+		message(FATAL_ERROR "The dependency '${${dependency}.name}' must have a repository specified")
+	endif()
+	if(NOT DEFINED ${dependency}.tag AND NOT DEFINED ${dependency}.branch)
+		message(FATAL_ERROR "The dependency '${${dependency}.name}' must have a tag or branch specified")
+	endif()
+endfunction()
+
 function(check_dependency_exist dependency)
 	if (NOT IS_DIRECTORY "${installation-path}")
 		file(MAKE_DIRECTORY "${installation-path}")
@@ -500,64 +516,130 @@ function(update_dependency dependency)
 	endif()
 	
 	if ("${recursive-pkg-arg}" STREQUAL "" OR NOT ${check-dependency-${${dependency}.name}-result})
-		if(NOT IS_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}")
-			file(MAKE_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}")
-		endif()
-		
-		set(options-set ${${dependency}.options})
-		separate_arguments(options-set)
-		execute_process(
-			COMMAND cmake -G "${used-generator}"  .. ${recursive-pkg-arg} -DCMAKE_INSTALL_PREFIX=${library-path} ${options-set}
-			WORKING_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}"
-		)
-		
-		if(WIN32)
-			set(additional-flags "")
-		else()
-			include(ProcessorCount)
-			ProcessorCount(cores)
-			if(NOT ${cores} EQUAL 0)
-				set(additional-flags "-- -j${cores}")
-				separate_arguments(additional-flags)
-			else()
-				set(additional-flags "")
-			endif()
-		endif()
-		
-		execute_process(
-			COMMAND cmake --build . --target install ${additional-flags}
-			WORKING_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}"
-		)
+		build_dependency(${dependency})
 	endif()
+endfunction()
+
+function(build_dependency dependency)
+	if(NOT IS_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}")
+		file(MAKE_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}")
+	endif()
+	
+	set(options-set ${${dependency}.options})
+	separate_arguments(options-set)
+	execute_process(
+		COMMAND cmake -G "${used-generator}"  .. ${recursive-pkg-arg} -DCMAKE_INSTALL_PREFIX=${library-path} ${options-set}
+		WORKING_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}"
+	)
+	
+	if(WIN32)
+		set(additional-flags "")
+	else()
+		include(ProcessorCount)
+		ProcessorCount(cores)
+		if(NOT ${cores} EQUAL 0)
+			set(additional-flags "-- -j${cores}")
+			separate_arguments(additional-flags)
+		else()
+			set(additional-flags "")
+		endif()
+	endif()
+	
+	execute_process(
+		COMMAND cmake --build . --target install ${additional-flags}
+		WORKING_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}"
+	)
 endfunction()
 
 function(update_dependency_list dependency-list)
 	foreach(dependency-id ${${dependency-list}})
-		if(NOT ${${dependency-list}_${dependency-id}._type} STREQUAL "object")
+		set(dependency ${dependency-list}_${dependency-id})
+		if(NOT ${${dependency}._type} STREQUAL "object")
 			message(FATAL_ERROR "The dependency array must only contain objects")
 		endif()
-		if(NOT DEFINED ${dependency-list}_${dependency-id}.name)
-			message(FATAL_ERROR "The dependency number '${dependency-id}' must have a name")
-		endif()
-		if(NOT DEFINED ${dependency-list}_${dependency-id}.target)
-			message(FATAL_ERROR "The dependency '${${dependency-list}_${dependency-id}.name}' must have a target specified")
-		endif()
-		if(NOT DEFINED ${dependency-list}_${dependency-id}.repository)
-			message(FATAL_ERROR "The dependency '${${dependency-list}_${dependency-id}.name}' must have a repository specified")
-		endif()
-		if(NOT DEFINED ${dependency-list}_${dependency-id}.tag AND NOT DEFINED ${dependency-list}_${dependency-id}.branch)
-			message(FATAL_ERROR "The dependency '${${dependency-list}_${dependency-id}.name}' must have a tag or branch specified")
-		endif()
 		
-		check_dependency_exist(${dependency-list}_${dependency-id})
+		assert_dependency_json_valid(${dependency})
+		check_dependency_exist(${dependency})
 		
-		if (${check-dependency-${${dependency-list}_${dependency-id}.name}-result})
-			message("${${dependency-list}_${dependency-id}.name} found")
+		if (${check-dependency-${${dependency}.name}-result})
+			message("${${dependency}.name} found")
 		else()
-			message("${${dependency-list}_${dependency-id}.name} not found... installing")
-			update_dependency(${dependency-list}_${dependency-id})
+			message("${${dependency}.name} not found... installing")
+			update_dependency(${dependency})
 		endif()
 	endforeach()
+endfunction()
+
+function(update_local_dependency_list dependency-list)
+	foreach(dependency-id ${lockfile.dependencies})
+		set(dependency lockfile.dependencies_${dependency-id})
+		if(NOT ${${dependency}._type} STREQUAL "object")
+			message(FATAL_ERROR "The dependency array must only contain objects")
+		endif()
+		
+		assert_dependency_json_valid(${dependency})
+		check_dependency_exist(${dependency})
+	endforeach()
+
+	file(READ "${test-path}/CMakeCache.txt" test-cache)
+
+	foreach(dependency-id ${lockfile.dependencies})
+		set(dependency lockfile.dependencies_${dependency-id})
+		if (${check-dependency-${${dependency}.name}-result})
+			update_local_dependency(${dependency})
+		else()
+			message("${${dependency}.name} not found... skipping")
+		endif()
+	endforeach()
+	
+	update_dependency_list(${dependency-list})
+endfunction()
+
+function(update_local_dependency dependency)
+	if(IS_DIRECTORY "${sources-path}/${${dependency}.name}")
+		if(DEFINED ${dependency}.branch)
+			string(REGEX MATCH "${${dependency}.name}_DIR:PATH=[^\n]*" matched-path "${test-cache}")
+			if ("${matched-path}" STREQUAL "")
+				message("${${dependency}.name} is not a cmake package... skipping")
+			else()
+				string(LENGTH "${${dependency}.name}_DIR:PATH=" path-prefix-length)
+				string(SUBSTRING "${matched-path}" ${path-prefix-length} -1 dependency-path)
+				
+				if ("${dependency-path}" MATCHES "${installation-path}/[^\n]*")
+					message("pulling ${${dependency}.name}...")
+					execute_process(
+						COMMAND git pull
+						OUTPUT_VARIABLE pull-result
+						WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
+					)
+					
+					if(NOT "${pull-result}" MATCHES "Already up to date.")
+						build_dependency(${dependency})
+					else()
+						message("${${dependency}.name} already up to date")
+					endif()
+				else()
+					message("${${dependency}.name} found externally at ${dependency-path}")
+				endif()
+			endif()
+		endif()
+	endif()
+	
+	if(EXISTS "${sources-path}/${${dependency}.name}/lockfile.json")
+		file(READ "${sources-path}/${${dependency}.name}/lockfile.json" lockfile_content_${${dependency}.name})
+		
+		ParseJson(lockfile_${${dependency}.name} "${lockfile_content_${${dependency}.name}}")
+		
+		if(NOT "${lockfile_${${dependency}.name}._type}" STREQUAL "object")
+			message(FATAL_ERROR "The lockfile for dependency \"${${dependency}.name}\" must contain a root object")
+		endif()
+		
+		if (NOT DEFINED lockfile_${${dependency}.name}.dependencies)
+			message(FATAL_ERROR "The lockfile for dependency \"${${dependency}.name}\" does not contains dependencies or is invalid")
+		endif()
+		
+		update_local_dependency_list(lockfile_${${dependency}.name})
+	endif()
 endfunction()
 
 #
@@ -588,7 +670,8 @@ if(${CMAKE_ARGV3} STREQUAL "setup")
 	
 elseif(${CMAKE_ARGV3} STREQUAL "update")
 	update_dependency_list(lockfile.dependencies)
-	
+elseif(${CMAKE_ARGV3} STREQUAL "update-local")
+	update_local_dependency_list(lockfile.dependencies)
 elseif(${CMAKE_ARGV3} STREQUAL "clean")
 	if(NOT "${lockfile.dependencies._type}" STREQUAL "array")
 		message(FATAL_ERROR "The lockfile must an an array 'dependencies' member of the root object")
