@@ -620,7 +620,7 @@ function(update_local_dependency dependency)
 						WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
 					)
 					
-					if(NOT "${pull-result}" MATCHES "Already up to date.")
+					if(NOT "${pull-result}" MATCHES "Already up")
 						build_dependency(${dependency})
 					else()
 						message("${${dependency}.name} already up to date")
