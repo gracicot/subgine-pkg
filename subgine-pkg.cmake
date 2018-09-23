@@ -753,7 +753,7 @@ function(update_local_dependency dependency)
 				WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
 			)
 			
-			if(NOT "${pull-result}" MATCHES "Already up to date.")
+			if(NOT "${pull-result}" MATCHES "Already up")
 				set(should-build ON)
 			endif()
 		endif()
@@ -798,21 +798,7 @@ if(${CMAKE_ARGV3} STREQUAL "setup")
 		set(module-path-setup "")
 	endif()
 	
-	set(cmake-prefix-setup "")
-	if(NOT "${lockfile.dependencies._type}" STREQUAL "array")
-		message(FATAL_ERROR "The lockfile must an an array 'dependencies' member of the root object")
-	endif()
-	
-	foreach(dependency-id ${lockfile.dependencies})
-		if(NOT ${lockfile.dependencies_${dependency-id}._type} STREQUAL "object")
-			message(FATAL_ERROR "The dependency array must only contain objects")
-		endif()
-		
-		string(APPEND cmake-prefix-setup "list(APPEND CMAKE_PREFIX_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/${lockfile.installation-path}/${library-directory-name}/\")\n")
-	endforeach()
-	
-	file(WRITE "${current-directory}/subgine-pkg.cmake" "${cmake-prefix-setup}\n${module-path-setup}\n")
-	
+	file(WRITE "${current-directory}/subgine-pkg.cmake" "list(APPEND CMAKE_PREFIX_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/${lockfile.installation-path}/${library-directory-name}/\")\n${module-path-setup}\n")
 elseif(${CMAKE_ARGV3} STREQUAL "install")
 	update_dependency_list(lockfile.dependencies)
 elseif(${CMAKE_ARGV3} STREQUAL "update")
