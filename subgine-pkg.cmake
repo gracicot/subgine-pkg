@@ -583,7 +583,8 @@ function(update_dependency_list dependency-list)
 		assert_dependency_json_valid(${dependency})
 		check_dependency_exist(${dependency})
 	endforeach()
-			file(READ "${test-path}/CMakeCache.txt" test-cache)
+	
+	file(READ "${test-path}/CMakeCache.txt" test-cache)
 	
 	foreach(dependency-id ${${dependency-list}})
 		set(dependency ${dependency-list}_${dependency-id})
