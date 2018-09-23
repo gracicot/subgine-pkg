@@ -371,6 +371,7 @@ set(sources-directory-name "sources")
 set(sources-path "${installation-path}/${sources-directory-name}")
 set(library-path "${installation-path}/${library-directory-name}")
 set(build-directory-name "build")
+set(options-file-name "subgine-pkg-options.txt")
 
 if (WIN32)
 	set(used-generator "Visual Studio 15 2017 Win64")
@@ -413,12 +414,18 @@ function(check_dependency_exist dependency)
 	endif()
 	
 	if(NOT "${${dependency}.ignore-version}" STREQUAL "true")
-		string(REGEX MATCH "^v" matches "${${dependency}.tag}")
-		
-		if("${matches}" STREQUAL "v")
-			string(SUBSTRING "${${dependency}.tag}" 1 -1 version-string-validate)
+		if(DEFINED ${dependency}.version)
+			set(version-string-validate "${${dependency}.version}")
+		elseif(DEFINED ${dependency}.tag)
+			string(REGEX MATCH "^v" matches "${${dependency}.tag}")
+			
+			if("${matches}" STREQUAL "v")
+				string(SUBSTRING "${${dependency}.tag}" 1 -1 version-string-validate)
+			else()
+				set(version-string-validate "${${dependency}.tag}")
+			endif()
 		else()
-			set(version-string-validate "${${dependency}.tag}")
+			set(version-string-validate "")
 		endif()
 		
 		if(NOT "${version-string-validate}" STREQUAL "")
@@ -525,6 +532,12 @@ function(build_dependency dependency)
 		file(MAKE_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}")
 	endif()
 	
+	if(DEFINED ${dependency}.options)
+		file(WRITE "${sources-path}/${${dependency}.name}/${build-directory-name}/${options-file-name}" "${${dependency}.options}")
+	else()
+		file(REMOVE "${sources-path}/${${dependency}.name}/${build-directory-name}/${options-file-name}")
+	endif()
+	
 	set(options-set ${${dependency}.options})
 	separate_arguments(options-set)
 	execute_process(
@@ -569,9 +582,25 @@ function(update_dependency_list dependency-list)
 		
 		assert_dependency_json_valid(${dependency})
 		check_dependency_exist(${dependency})
+	endforeach()
+			file(READ "${test-path}/CMakeCache.txt" test-cache)
+	
+	foreach(dependency-id ${${dependency-list}})
+		set(dependency ${dependency-list}_${dependency-id})
 		
 		if (${check-dependency-${${dependency}.name}-result})
-			message("${${dependency}.name} found")
+			if(IS_DIRECTORY "${sources-path}/${${dependency}.name}")
+				check_local_options(${dependency})
+				
+				if(check-local-options-${${dependency}.name}-result)
+					message("${${dependency}.name} options changed... rebuilding")
+					build_dependency(${dependency})
+				else()
+					message("${${dependency}.name} found")
+				endif()
+			else()
+				message("${${dependency}.name} found")
+			endif()
 		else()
 			message("${${dependency}.name} not found... installing")
 			update_dependency(${dependency})
@@ -602,31 +631,142 @@ function(update_local_dependency_list dependency-list)
 	update_dependency_list(${dependency-list})
 endfunction()
 
-function(update_local_dependency dependency)
-	if(IS_DIRECTORY "${sources-path}/${${dependency}.name}")
-		if(DEFINED ${dependency}.branch)
-			string(REGEX MATCH "${${dependency}.name}_DIR:PATH=[^\n]*" matched-path "${test-cache}")
-			if ("${matched-path}" STREQUAL "")
-				message("${${dependency}.name} is not a cmake package... skipping")
-			else()
-				string(LENGTH "${${dependency}.name}_DIR:PATH=" path-prefix-length)
-				string(SUBSTRING "${matched-path}" ${path-prefix-length} -1 dependency-path)
+function(check_local_options)
+	check_local_dependency(${dependency})
+	set(check-local-options OFF)
+	
+	if(check-local-dependency-${${dependency}.name}-result)
+		if(DEFINED ${dependency}.options)
+			if(EXISTS "${sources-path}/${${dependency}.name}/${build-directory-name}/${options-file-name}")
+				file(READ "${sources-path}/${${dependency}.name}/${build-directory-name}/${options-file-name}" options-string)
 				
-				if ("${dependency-path}" MATCHES "${installation-path}/[^\n]*")
-					message("pulling ${${dependency}.name}...")
-					execute_process(
-						COMMAND git pull
-						OUTPUT_VARIABLE pull-result
-						WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
-					)
-					
-					if(NOT "${pull-result}" MATCHES "Already up to date.")
-						build_dependency(${dependency})
-					else()
-						message("${${dependency}.name} already up to date")
-					endif()
+				if("${options-string}" STREQUAL "${${dependency}.options}")
+					set(check-local-options OFF)
+				else()
+					set(check-local-options ON)
 				endif()
+			else()
+				set(check-local-options ON)
 			endif()
+		else()
+			if(EXISTS "${sources-path}/${${dependency}.name}/${build-directory-name}/${options-file-name}")
+				set(check-local-options ON)
+			else()
+				set(check-local-options OFF)
+			endif()
+		endif()
+	endif()
+	if (${check-local-options})
+		set(check-local-options-${${dependency}.name}-result ON PARENT_SCOPE)
+	else()
+		set(check-local-options-${${dependency}.name}-result OFF PARENT_SCOPE)
+	endif()
+endfunction()
+
+function(check_local_dependency dependency)
+	set(check-local-package OFF)
+	if(IS_DIRECTORY "${sources-path}/${${dependency}.name}")
+		string(REGEX MATCH "${${dependency}.name}_DIR:PATH=[^\n]*" matched-path "${test-cache}")
+		if ("${matched-path}" STREQUAL "")
+			message("${${dependency}.name} is not a cmake package... skipping")
+		else()
+			string(LENGTH "${${dependency}.name}_DIR:PATH=" path-prefix-length)
+			string(SUBSTRING "${matched-path}" ${path-prefix-length} -1 dependency-path)
+			
+			if ("${dependency-path}" MATCHES "${installation-path}/[^\n]*")
+				set(check-local-package ON)
+			endif()
+		endif()
+	endif()
+	
+	if (${check-local-package})
+		set(check-local-dependency-${${dependency}.name}-result ON PARENT_SCOPE)
+	else()
+		set(check-local-dependency-${${dependency}.name}-result OFF PARENT_SCOPE)
+	endif()
+endfunction()
+
+function(check_branch_status dependency)
+	set(check-branch-status OFF)
+	
+	execute_process(
+		COMMAND git name-rev --name-only HEAD
+		OUTPUT_VARIABLE branch-result
+		WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
+	)
+	string(REGEX REPLACE "\n$" "" branch-result "${branch-result}")
+	
+	if(DEFINED ${dependency}.branch)
+		if(NOT "${branch-result}" STREQUAL "${${dependency}.branch}")
+			set(check-branch-status ON)
+		endif()
+	else()
+		if(NOT "${branch-result}" STREQUAL "tags/${${dependency}.tag}")
+			set(check-branch-status ON)
+		endif()
+	endif()
+	
+	if (${check-branch-status})
+		set(check-branch-status-${${dependency}.name}-result ON PARENT_SCOPE)
+	else()
+		set(check-branch-status-${${dependency}.name}-result OFF PARENT_SCOPE)
+	endif()
+endfunction()
+
+function(update_local_dependency dependency)
+	check_local_dependency(${dependency})
+	
+	if(check-local-dependency-${${dependency}.name}-result)
+		check_branch_status(${dependency})
+		
+		set(should-build OFF)
+		if(check-branch-status-${${dependency}.name}-result)
+			if (DEFINED ${dependency}.tag)
+				set(checkout-argument "${${dependency}.tag}")
+				message("${${dependency}.name}: checkout tag ${${dependency}.tag}")
+			else()
+				set(checkout-argument "${${dependency}.branch}")
+				message("${${dependency}.name}: checkout branch ${${dependency}.branch}")
+			endif()
+			
+			execute_process(
+				COMMAND git fetch
+				WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
+				OUTPUT_QUIET
+			)
+			
+			execute_process(
+				COMMAND git checkout ${checkout-argument}
+				WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
+				OUTPUT_QUIET
+			)
+			
+			message("${${dependency}.name} HEAD changed... rebuilding")
+			set(should-build ON)
+		endif()
+		
+		if (DEFINED ${dependency}.branch)
+			message("pulling ${${dependency}.name}...")
+			execute_process(
+				COMMAND git pull
+				OUTPUT_VARIABLE pull-result
+				WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
+			)
+			
+			if(NOT "${pull-result}" MATCHES "Already up to date.")
+				set(should-build ON)
+			endif()
+		endif()
+		
+		check_local_options(${dependency})
+		
+		if(check-local-options-${${dependency}.name}-result)
+			message("${${dependency}.name} options changed... rebuilding")
+			set(should-build ON)
+		endif()
+		
+		if(should-build)
+			build_dependency(${dependency})
 		endif()
 	endif()
 	
