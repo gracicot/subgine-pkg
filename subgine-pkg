@@ -1,4 +1,11 @@
 #!/bin/sh
 
 BASEDIR=$(dirname "$0")
-cmake -P "$BASEDIR/subgine-pkg.cmake" $@
+
+CMAKE_PATH={%CMAKEPATH%}
+if [ ! -z "$CMAKE_PATH" ]
+then
+    PATH="$CMAKE_PATH:$PATH" cmake -P "$BASEDIR/subgine-pkg.cmake" $@
+else
+    cmake -P "$BASEDIR/subgine-pkg.cmake" $@
+fi
