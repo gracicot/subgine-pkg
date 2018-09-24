@@ -669,7 +669,9 @@ function(check_local_dependency dependency)
 	if(IS_DIRECTORY "${sources-path}/${${dependency}.name}")
 		string(REGEX MATCH "${${dependency}.name}_DIR:PATH=[^\n]*" matched-path "${test-cache}")
 		if ("${matched-path}" STREQUAL "")
-			message("${${dependency}.name} is not a cmake package... skipping")
+			if(ARGC GREATER 1 AND "${ARGV1}" STREQUAL "SKIPPING_VERBOSE")
+				message("${${dependency}.name} is not a cmake package... skipping")
+			endif()
 		else()
 			string(LENGTH "${${dependency}.name}_DIR:PATH=" path-prefix-length)
 			string(SUBSTRING "${matched-path}" ${path-prefix-length} -1 dependency-path)
@@ -690,19 +692,30 @@ endfunction()
 function(check_branch_status dependency)
 	set(check-branch-status OFF)
 	
-	execute_process(
-		COMMAND git name-rev --name-only HEAD
-		OUTPUT_VARIABLE branch-result
-		WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
-	)
-	string(REGEX REPLACE "\n$" "" branch-result "${branch-result}")
-	
 	if(DEFINED ${dependency}.branch)
+		execute_process(
+			COMMAND git symbolic-ref -q --short HEAD
+			OUTPUT_VARIABLE branch-result
+			WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
+			ERROR_QUIET
+		)
+		
+		string(REGEX REPLACE "\n$" "" branch-result "${branch-result}")
+		
 		if(NOT "${branch-result}" STREQUAL "${${dependency}.branch}")
 			set(check-branch-status ON)
 		endif()
 	else()
-		if(NOT "${branch-result}" STREQUAL "tags/${${dependency}.tag}")
+		execute_process(
+			COMMAND git describe --tags --exact-match
+			OUTPUT_VARIABLE branch-result
+			WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
+			ERROR_QUIET
+		)
+		
+		string(REGEX REPLACE "\n$" "" branch-result "${branch-result}")
+		
+		if(NOT "${branch-result}" STREQUAL "${${dependency}.tag}")
 			set(check-branch-status ON)
 		endif()
 	endif()
@@ -715,7 +728,7 @@ function(check_branch_status dependency)
 endfunction()
 
 function(update_local_dependency dependency)
-	check_local_dependency(${dependency})
+	check_local_dependency(${dependency} SKIPPING_VERBOSE)
 	
 	if(check-local-dependency-${${dependency}.name}-result)
 		check_branch_status(${dependency})
