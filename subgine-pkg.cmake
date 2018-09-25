@@ -497,7 +497,7 @@ function(update_dependency dependency)
 	
 	if (DEFINED ${dependency}.branch)
 		execute_process(
-			COMMAND git pull
+			COMMAND git pull ${recurse-argument}
 			WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
 		)
 	endif()
@@ -761,8 +761,16 @@ function(update_local_dependency dependency)
 		
 		if (DEFINED ${dependency}.branch)
 			message("pulling ${${dependency}.name}...")
+			
+			set(recurse-argument "")
+			if (DEFINED ${dependency}.fetch-submodules)
+				if (${${dependency}.fetch-submodules})
+					set(recurse-argument "--recurse-submodules")
+				endif()
+			endif()
+			
 			execute_process(
-				COMMAND git pull
+				COMMAND git pull ${recurse-argument}
 				OUTPUT_VARIABLE pull-result
 				WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
 			)
