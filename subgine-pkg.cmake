@@ -376,8 +376,10 @@ set(options-file-name "subgine-pkg-options.txt")
 if (WIN32)
 	set(used-generator "Visual Studio 15 2017 Win64")
 else()
-	set(used-generator "Unix Makefiles")
+	set(used-generator "Ninja")
 endif()
+
+include(ProcessorCount)
 
 #
 # Dependency Functions
@@ -441,8 +443,14 @@ function(check_dependency_exist dependency)
 		set(cmake-version-check "")
 	endif()
 	
+	if (DEFINED ${dependency}.component)
+		set(dependency_component "COMPONENTS ${${dependency}.component}")
+	else()
+		set(dependency_component "")
+	endif()
 	
-	file(WRITE "${test-path}/CMakeLists.txt" "cmake_minimum_required(VERSION 3.0)\nunset(${${dependency}.name}_DIR CACHE)\n${cmake-module-path-command}\nlist(APPEND CMAKE_PREFIX_PATH \"${library-path}\")\nfind_package(${${dependency}.name} ${cmake-version-check} REQUIRED)\nif(TARGET ${${dependency}.target})\nelse()\nmessage(SEND_ERROR \"Package ${${dependency}.name} not found\")\nendif()")
+	
+	file(WRITE "${test-path}/CMakeLists.txt" "cmake_minimum_required(VERSION 3.0)\nunset(${${dependency}.name}_DIR CACHE)\n${cmake-module-path-command}\nlist(APPEND CMAKE_PREFIX_PATH \"${library-path}\")\nfind_package(${${dependency}.name} ${cmake-version-check} ${dependency_component} REQUIRED)\nif(TARGET ${${dependency}.target})\nelse()\nmessage(SEND_ERROR \"Package ${${dependency}.name} not found\")\nendif()")
 	execute_process(
 		COMMAND cmake -G "${used-generator}" .
 		WORKING_DIRECTORY "${test-path}"
@@ -545,17 +553,12 @@ function(build_dependency dependency)
 		WORKING_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}"
 	)
 	
-	if(WIN32)
-		set(additional-flags "")
+	ProcessorCount(cores)
+	if(NOT ${cores} EQUAL 0)
+		set(additional-flags "--parallel ${cores}")
+		separate_arguments(additional-flags)
 	else()
-		include(ProcessorCount)
-		ProcessorCount(cores)
-		if(NOT ${cores} EQUAL 0)
-			set(additional-flags "-- -j${cores}")
-			separate_arguments(additional-flags)
-		else()
-			set(additional-flags "")
-		endif()
+		set(additional-flags "")
 	endif()
 	
 	execute_process(
@@ -776,6 +779,7 @@ function(update_local_dependency dependency)
 			)
 			
 			if(NOT "${pull-result}" MATCHES "Already up")
+				message("${${dependency}.name} branch updated... rebuilding")
 				set(should-build ON)
 			endif()
 		endif()
