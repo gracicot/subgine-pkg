@@ -225,7 +225,7 @@ begin
   ChoosePathLabel.Height := 24;
   ChoosePathLabel.AutoSize := False;
   ChoosePathLabel.Wordwrap := True;
-  ChoosePathLabel.Caption := 'This option will promt you to select the CMake location';
+  ChoosePathLabel.Caption := 'This option will prompt you to select the CMake bin directory';
   
   if CheckNext then begin
     ChoosePathRadioButton.Checked := True;
