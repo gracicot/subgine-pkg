@@ -1006,6 +1006,35 @@ function(current_cmake_arguments starts-at return-value)
 	set(${return-value} ${cmake-arguments} PARENT_SCOPE)
 endfunction()
 
+function(setup_profile dependency-list cmake-arguments)
+	if(DEFINED manifest.cmake-module-path)
+		set(module-path-setup "list(APPEND CMAKE_MODULE_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/${manifest.cmake-module-path}\")")
+		set(module-path-argument "-DCMAKE_MODULE_PATH=\"${current-directory}/${manifest.cmake-module-path}\"")
+	else()
+		set(module-path-setup "")
+		set(module-path-argument "")
+	endif()
+	
+	set(scan-prefix-path "")
+	foreach(dependency-id ${${dependency-list}})
+		set(dependency ${dependency-list}_${dependency-id})
+		set(scan-prefix-path "${scan-prefix-path}\nfind_file(subgine-pkg-setup-file-${${dependency}.name} subgine-pkg-${${dependency}.name}-${current-profile}.cmake)\nif(NOT \"\${subgine-pkg-setup-file-${${dependency}.name}}\" STREQUAL \"subgine-pkg-setup-file-${${dependency}.name}-NOTFOUND\")\n\tinclude(\"\${subgine-pkg-setup-file-${${dependency}.name}}\")\n\tif(NOT \"\${found-pkg-${${dependency}.name}-prefix-path}\" STREQUAL \"\")\n\t\tlist(APPEND CMAKE_PREFIX_PATH \"\${found-pkg-${${dependency}.name}-prefix-path}\")\n\tendif()\n\tif(NOT \"\${found-pkg-${${dependency}.name}-module-path}\")\n\t\tlist(APPEND CMAKE_MODULE_PATH \"\${found-pkg-${${dependency}.name}-module-path}\")\n\tendif()\nendif()")
+	endforeach()
+	
+	file(WRITE "${installation-path}/${current-profile}-profile.cmake" "
+list(APPEND CMAKE_PREFIX_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/${manifest.installation-path}/${library-directory-name}/${current-profile}/\")
+
+${scan-prefix-path}
+
+file(WRITE \"\${CMAKE_BINARY_DIR}/subgine-pkg-\${PROJECT_NAME}-${current-profile}.cmake\" \"
+set(found-pkg-\${PROJECT_NAME}-prefix-path \\\"\${CMAKE_PREFIX_PATH}\\\")
+set(found-pkg-\${PROJECT_NAME}-module-path \\\"${manifest.cmake-module-path}\\\")
+set(found-pkg-\${PROJECT_NAME}-manifest-path \\\"\${CMAKE_SOURCE_DIR}/sbg-manifest.json\\\")\")
+
+${module-path-setup}\n")
+	file(WRITE "${config-path}/${current-profile}-arguments.txt" "${cmake-arguments};${module-path-argument}")
+endfunction()
+
 #
 # Commands Implementation
 #
@@ -1023,25 +1052,7 @@ if(${CMAKE_ARGV3} STREQUAL "setup")
 		endif()
 		
 		current_cmake_arguments(${cmake-arguments-starts} cmake-arguments)
-		
-		if(DEFINED manifest.cmake-module-path)
-			set(module-path-setup "list(APPEND CMAKE_MODULE_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/${manifest.cmake-module-path}\")")
-			set(module-path-argument "-DCMAKE_MODULE_PATH=\"${current-directory}/${manifest.cmake-module-path}\"")
-		else()
-			set(module-path-setup "")
-			set(module-path-argument "")
-		endif()
-		
-		file(WRITE "${installation-path}/${current-profile}-profile.cmake" "
-list(APPEND CMAKE_PREFIX_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/${manifest.installation-path}/${library-directory-name}/${current-profile}/\")
-file(WRITE \"\${CMAKE_BINARY_DIR}/subgine-pkg-\${PROJECT_NAME}-${current-profile}.cmake\" \"
-	set(found-pkg-\${PROJECT_NAME}-prefix-path \\\"\${CMAKE_PREFIX_PATH}\\\")
-	set(found-pkg-\${PROJECT_NAME}-module-path \\\"${manifest.cmake-module-path}\\\")
-	set(found-pkg-\${PROJECT_NAME}-manifest-path \\\"\${CMAKE_SOURCE_DIR}/sbg-manifest.json\\\")
-\")
-
-${module-path-setup}\n")
-		file(WRITE "${config-path}/${current-profile}-arguments.txt" "${cmake-arguments};${module-path-argument}")
+		setup_profile(manifest.dependencies "${cmake-arguments}")
 	else()
 		message("Usage: subgine-pkg setup [<profile>] <cmake arguments...>")
 	endif()
