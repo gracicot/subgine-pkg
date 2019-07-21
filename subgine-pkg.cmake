@@ -9,25 +9,46 @@ function(print_help)
 	message("usage: subgine-pkg <command> [<args>]")
 	message("")
 	message("Avalable commands:")
-	message("   setup    Create the subgine-pkg.cmake file")
+	message("   setup    Create the subgine-pkg.cmake file with a configuration")
 	message("   install  Fetch and install dependencies")
 	message("   update   Install and update local dependencies")
 	message("   clean    Clean all build and cache directories")
 	message("   prune    Delete all cache, installed packages and fetched sources")
+	message("   remove   Delete the specified package")
 	message("   help     Print this help")
 endfunction()
 
-set(command-list "update" "clean" "prune" "help" "setup" "install")
+set(command-list "update" "clean" "prune" "help" "setup" "install" "remove")
 
 if(${CMAKE_ARGC} LESS 4)
 	print_help()
-elseif(${CMAKE_ARGC} EQUAL 4)
+elseif(${CMAKE_ARGC} GREATER_EQUAL 4)
 
 if(${CMAKE_ARGV3} STREQUAL "help")
 	print_help()
 elseif(NOT ${CMAKE_ARGV3} IN_LIST command-list)
 	message(FATAL_ERROR "subgine-pkg: '${CMAKE_ARGV3}' is not a subgine-pkg command. See 'subgine-pkg help'")
 else()
+
+set(subgine-pkg-silent OFF)
+
+function(message)
+	if(NOT subgine-pkg-silent)
+		_message(${ARGV})
+	endif()
+endfunction()
+
+set(current-profile "default")
+
+function(select_profile variable)
+	if(DEFINED ${variable})
+		set(current-profile "${${variable}}")
+	endif()
+endfunction()
+
+if(${CMAKE_ARGC} GREATER 4)
+	set(current-profile "${CMAKE_ARGV4}")
+endif()
 
 #
 # Json Parser
@@ -50,7 +71,7 @@ macro(ParseJson prefix jsonString)
 	unset(json_jsonLen)
 	unset(json_string)
 	unset(json_value)
-	unset(json_inValue)	
+	unset(json_inValue)
 	unset(json_name)
 	unset(json_inName)
 	unset(json_newPrefix)
@@ -344,37 +365,45 @@ endmacro()
 # Environement Validation
 #
 
+set(subgine-pkg-silent ON)
+find_package(Git REQUIRED)
+set(subgine-pkg-silent OFF)
+
 set(current-directory "${CMAKE_CURRENT_SOURCE_DIR}")
 
-if(NOT EXISTS "${current-directory}/lockfile.json")
-	message(FATAL_ERROR "A lockfile.json file must be in the current working directory")
+if(NOT EXISTS "${current-directory}/sbg-manifest.json")
+	message(FATAL_ERROR "A sbg-manifest.json file must be in the current working directory")
 endif()
 
-file(READ "lockfile.json" lockfile_content)
+file(READ "sbg-manifest.json" manifest_content)
 
-ParseJson(lockfile "${lockfile_content}")
+ParseJson(manifest "${manifest_content}")
 
-if(NOT "${lockfile._type}" STREQUAL "object")
-	message(FATAL_ERROR "The lockfile must contain a root object")
+if(NOT "${manifest._type}" STREQUAL "object")
+	message(FATAL_ERROR "The manifest must contain a root object")
 endif()
 
-if(NOT DEFINED lockfile.installation-path)
-	message(FATAL_ERROR "The lockfile must contain a string member installation-path")
+if(NOT DEFINED manifest.installation-path)
+	message(FATAL_ERROR "The manifest must contain a string member installation-path")
 endif()
 
-set(installation-path "${current-directory}/${lockfile.installation-path}")
+set(installation-path "${current-directory}/${manifest.installation-path}")
 set(test-path "${installation-path}/.test")
 
 set(library-directory-name "module")
 set(sources-directory-name "sources")
+set(config-directory-name "config")
 
 set(sources-path "${installation-path}/${sources-directory-name}")
 set(library-path "${installation-path}/${library-directory-name}")
+set(config-path "${installation-path}/${config-directory-name}")
 set(build-directory-name "build")
-set(options-file-name "subgine-pkg-options.txt")
+set(config-suffix "${current-profile}")
+set(built-options-file-name "subgine-pkg-options.txt")
+set(built-revision-file-name "subgine-pkg-revision.txt")
 
 if (WIN32)
-	set(used-generator "Visual Studio 15 2017 Win64")
+	set(used-generator "Visual Studio 16 2019 Win64")
 else()
 	set(used-generator "Ninja")
 endif()
@@ -385,12 +414,44 @@ include(ProcessorCount)
 # Dependency Functions
 #
 
+function(version_from_tag tag return-value)
+	string(REGEX MATCH "^v" matches "${tag}")
+		
+	if("${matches}" STREQUAL "v")
+		string(SUBSTRING "${tag}" 1 -1 version-string)
+		set(${return-value} "${version-string}" PARENT_SCOPE)
+	else()
+		set(${return-value} "${tag}" PARENT_SCOPE)
+	endif()
+endfunction()
+
+function(dependency_cmake_version_check dependency return-value)
+	if (NOT ${dependency}.ignore-version)
+		if(DEFINED ${dependency}.version)
+			set(version-string-validate "${${dependency}.version}")
+		elseif(DEFINED ${dependency}.tag)
+			version_from_tag(${${dependency}.tag} version-string-validate)
+		else()
+			set(version-string-validate "")
+		endif()
+
+		if(NOT "${version-string-validate}" STREQUAL "")
+			if(${${dependency}.strict})
+				set(${return-value} "${version-string-validate} EXACT" PARENT_SCOPE)
+			else()
+				set(${return-value} "${version-string-validate}" PARENT_SCOPE)
+			endif()
+		else()
+			set(${return-value} "" PARENT_SCOPE)
+		endif()
+	else()
+		set(${return-value} "" PARENT_SCOPE)
+	endif()
+endfunction()
+
 function(assert_dependency_json_valid dependency)
 	if(NOT DEFINED ${dependency}.name)
 		message(FATAL_ERROR "The dependency '${dependency}' must have a name")
-	endif()
-	if(NOT DEFINED ${dependency}.target)
-		message(FATAL_ERROR "The dependency '${${dependency}.name}' must have a target specified")
 	endif()
 	if(NOT DEFINED ${dependency}.repository)
 		message(FATAL_ERROR "The dependency '${${dependency}.name}' must have a repository specified")
@@ -400,7 +461,7 @@ function(assert_dependency_json_valid dependency)
 	endif()
 endfunction()
 
-function(check_dependency_exist dependency)
+function(check_dependency_exist dependency cmake-flags return-value)
 	if (NOT IS_DIRECTORY "${installation-path}")
 		file(MAKE_DIRECTORY "${installation-path}")
 	endif()
@@ -409,39 +470,13 @@ function(check_dependency_exist dependency)
 		file(MAKE_DIRECTORY "${test-path}")
 	endif()
 	
-	if(DEFINED lockfile.cmake-module-path)
-		set(cmake-module-path-command "list(APPEND CMAKE_MODULE_PATH \"${current-directory}/${lockfile.cmake-module-path}\")")
+	if(DEFINED manifest.cmake-module-path)
+		set(cmake-module-path-command "list(APPEND CMAKE_MODULE_PATH \"${current-directory}/${manifest.cmake-module-path}\")")
 	else()
 		set(cmake-module-path-command "")
 	endif()
 	
-	if(NOT "${${dependency}.ignore-version}" STREQUAL "true")
-		if(DEFINED ${dependency}.version)
-			set(version-string-validate "${${dependency}.version}")
-		elseif(DEFINED ${dependency}.tag)
-			string(REGEX MATCH "^v" matches "${${dependency}.tag}")
-			
-			if("${matches}" STREQUAL "v")
-				string(SUBSTRING "${${dependency}.tag}" 1 -1 version-string-validate)
-			else()
-				set(version-string-validate "${${dependency}.tag}")
-			endif()
-		else()
-			set(version-string-validate "")
-		endif()
-		
-		if(NOT "${version-string-validate}" STREQUAL "")
-			if(${${dependency}.strict})
-				set(cmake-version-check "${version-string-validate} EXACT")
-			else()
-				set(cmake-version-check "${version-string-validate}")
-			endif()
-		else()
-				set(cmake-version-check "")
-		endif()
-	else()
-		set(cmake-version-check "")
-	endif()
+	dependency_cmake_version_check(${dependency} cmake-version-check)
 	
 	if (DEFINED ${dependency}.component)
 		set(dependency_component "COMPONENTS ${${dependency}.component}")
@@ -449,10 +484,16 @@ function(check_dependency_exist dependency)
 		set(dependency_component "")
 	endif()
 	
+	if (DEFINED ${dependency}.target)
+		set(target-cmake-check "if(TARGET ${${dependency}.target})\nelse()\nmessage(SEND_ERROR \"Package ${${dependency}.name} not found\")\nendif()")
+	else()
+		set(target-cmake-check "")
+	endif()
 	
-	file(WRITE "${test-path}/CMakeLists.txt" "cmake_minimum_required(VERSION 3.0)\nunset(${${dependency}.name}_DIR CACHE)\n${cmake-module-path-command}\nlist(APPEND CMAKE_PREFIX_PATH \"${library-path}\")\nfind_package(${${dependency}.name} ${cmake-version-check} ${dependency_component} REQUIRED)\nif(TARGET ${${dependency}.target})\nelse()\nmessage(SEND_ERROR \"Package ${${dependency}.name} not found\")\nendif()")
+	
+	file(WRITE "${test-path}/CMakeLists.txt" "cmake_minimum_required(VERSION 3.15)\nunset(${${dependency}.name}_DIR CACHE)\n${cmake-module-path-command}\nlist(APPEND CMAKE_PREFIX_PATH \"${library-path}/${current-profile}/\")\nfind_package(${${dependency}.name} ${cmake-version-check} ${dependency_component} REQUIRED)\n${target-cmake-check}")
 	execute_process(
-		COMMAND cmake -G "${used-generator}" .
+		COMMAND ${CMAKE_COMMAND} -G "${used-generator}" -DCMAKE_FIND_PACKAGE_NO_PACKAGE_REGISTRY=ON ${cmake-flags} .
 		WORKING_DIRECTORY "${test-path}"
 		RESULT_VARIABLE result-check-dep
 		OUTPUT_QUIET
@@ -460,20 +501,20 @@ function(check_dependency_exist dependency)
 	)
 	
 	if (${result-check-dep} EQUAL 0)
-		set(check-dependency-${${dependency}.name}-result ON PARENT_SCOPE)
+		set(${return-value} ON PARENT_SCOPE)
 	else()
-		set(check-dependency-${${dependency}.name}-result OFF PARENT_SCOPE)
+		set(${return-value} OFF PARENT_SCOPE)
 	endif()
 endfunction()
 
-function(update_dependency dependency)
+function(update_dependency dependency cmake-flags)
 	if(NOT IS_DIRECTORY "${sources-path}")
 		file(MAKE_DIRECTORY "${sources-path}")
 	endif()
 	if(IS_DIRECTORY "${sources-path}/${${dependency}.name}/.git")
 		message("fetching updates for ${${dependency}.name}")
 		execute_process(
-			COMMAND git fetch
+			COMMAND ${GIT_EXECUTABLE} fetch
 			WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
 		)
 	else()
@@ -487,7 +528,7 @@ function(update_dependency dependency)
 		endif()
 		
 		execute_process(
-			COMMAND git clone ${${dependency}.repository} ${${dependency}.name} ${recurse-argument}
+			COMMAND ${GIT_EXECUTABLE} clone ${${dependency}.repository} ${${dependency}.name} ${recurse-argument}
 			WORKING_DIRECTORY ${sources-path}
 		)
 	endif()
@@ -499,84 +540,111 @@ function(update_dependency dependency)
 	endif()
 
 	execute_process(
-		COMMAND git checkout ${checkout-argument}
+		COMMAND ${GIT_EXECUTABLE} checkout ${checkout-argument}
 		WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
 	)
 	
-	if (DEFINED ${dependency}.branch)
-		execute_process(
-			COMMAND git pull ${recurse-argument}
-			WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
-		)
-	endif()
-	
-	set(recursive-pkg-arg "")
-	if(EXISTS "${sources-path}/${${dependency}.name}/lockfile.json")
+	if(EXISTS "${sources-path}/${${dependency}.name}/sbg-manifest.json")
 		message("Reading ${${dependency}.name} dependencies...")
-		file(READ "${sources-path}/${${dependency}.name}/lockfile.json" lockfile_content_${${dependency}.name})
-
-		ParseJson(lockfile_${${dependency}.name} "${lockfile_content_${${dependency}.name}}")
-
-		if(NOT "${lockfile_${${dependency}.name}._type}" STREQUAL "object")
-			message(FATAL_ERROR "The lockfile for dependency \"${${dependency}.name}\" must contain a root object")
+		file(READ "${sources-path}/${${dependency}.name}/sbg-manifest.json" manifest_content_${${dependency}.name})
+		
+		ParseJson(manifest_${${dependency}.name} "${manifest_content_${${dependency}.name}}")
+		
+		if(NOT "${manifest_${${dependency}.name}._type}" STREQUAL "object")
+			message(FATAL_ERROR "The manifest for dependency \"${${dependency}.name}\" must contain a root object")
 		endif()
 		
-		if (NOT DEFINED lockfile_${${dependency}.name}.dependencies)
-			message(FATAL_ERROR "The lockfile for dependency \"${${dependency}.name}\" does not contains dependencies or is invalid")
+		if (NOT DEFINED manifest_${${dependency}.name}.dependencies)
+			message(FATAL_ERROR "The manifest for dependency \"${${dependency}.name}\" does not contains dependencies or is invalid")
 		endif()
 		
-		update_dependency_list(lockfile_${${dependency}.name}.dependencies)
-		set(recursive-pkg-arg "-DCMAKE_PREFIX_PATH=${library-path}")
-		check_dependency_exist(${dependency})
+		update_dependency_list(manifest_${${dependency}.name}.dependencies "${cmake-flags}")
 	endif()
 	
-	if ("${recursive-pkg-arg}" STREQUAL "" OR NOT ${check-dependency-${${dependency}.name}-result})
-		build_dependency(${dependency})
+	should_rebuild_dependency(${dependency} ASSUME_LOCAL should-rebuild)
+	if(should-rebuild)
+		build_dependency(${dependency} "${cmake-flags}")
 	endif()
 endfunction()
 
-function(build_dependency dependency)
-	if(NOT IS_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}")
-		file(MAKE_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}")
-	endif()
-	
+function(write_dependency_options_file dependency)
 	if(DEFINED ${dependency}.options)
-		file(WRITE "${sources-path}/${${dependency}.name}/${build-directory-name}/${options-file-name}" "${${dependency}.options}")
+		file(WRITE "${sources-path}/${${dependency}.name}/${build-directory-name}/${config-suffix}/${built-options-file-name}" "${${dependency}.options}")
 	else()
-		file(REMOVE "${sources-path}/${${dependency}.name}/${build-directory-name}/${options-file-name}")
-	endif()
-	
-	set(options-set ${${dependency}.options})
-	separate_arguments(options-set)
-	execute_process(
-		COMMAND cmake -G "${used-generator}"  .. ${recursive-pkg-arg} -DCMAKE_INSTALL_PREFIX=${library-path} ${options-set}
-		WORKING_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}"
-	)
-	
-	ProcessorCount(cores)
-	if(NOT ${cores} EQUAL 0)
-		set(additional-flags "--parallel ${cores}")
-		separate_arguments(additional-flags)
-	else()
-		set(additional-flags "")
-	endif()
-	
-	execute_process(
-		COMMAND cmake --build . ${additional-flags}
-		WORKING_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}"
-	)
-	
-	check_dependency_exist(${dependency})
-	
-	if (NOT ${check-dependency-${${dependency}.name}-result})
-		execute_process(
-			COMMAND cmake --build . --target install ${additional-flags}
-			WORKING_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}"
-		)
+		file(REMOVE "${sources-path}/${${dependency}.name}/${build-directory-name}/${config-suffix}/${built-options-file-name}")
 	endif()
 endfunction()
 
-function(update_dependency_list dependency-list)
+function(write_dependency_revision_file dependency)
+	dependency_current_revision(${dependency} current-revision)
+	file(WRITE "${sources-path}/${${dependency}.name}/${build-directory-name}/${config-suffix}/${built-revision-file-name}" "${current-revision}")
+endfunction()
+
+function(dependency_cmake_options dependency)
+	set(cmake-options ${${dependency}.options})
+	separate_arguments(cmake-options)
+	set(dependency-cmake-options-${${dependency}.name} ${cmake-options} PARENT_SCOPE)
+endfunction()
+
+function(dependency_build_additional_flags dependency return-value)
+	ProcessorCount(cores)
+	if(${cores} GREATER 0)
+		set(additional-arguments "--parallel ${cores}")
+		separate_arguments(additional-arguments)
+		set(${return-value} ${additional-arguments} PARENT_SCOPE)
+	else()
+		set(${return-value} "" PARENT_SCOPE)
+	endif()
+endfunction()
+
+function(build_dependency cmake-flags dependency)
+	if(NOT IS_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}/${config-suffix}")
+		file(MAKE_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}/${config-suffix}")
+	endif()
+	
+	write_dependency_options_file(${dependency})
+	dependency_cmake_options(${dependency})
+	
+	execute_process(
+		COMMAND ${CMAKE_COMMAND} -G "${used-generator}" ../.. ${recursive-pkg-arg}
+			${cmake-flags}
+			-DCMAKE_PREFIX_PATH=${library-path}/${current-profile}
+			-DCMAKE_INSTALL_PREFIX=${library-path}/${config-suffix}/${${dependency}.name} ${dependency-cmake-options-${${dependency}.name}}
+			-DCMAKE_EXPORT_NO_PACKAGE_REGISTRY=ON
+		WORKING_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}/${config-suffix}"
+		RESULT_VARIABLE result-build-dependency
+	)
+	
+	if (NOT ${result-build-dependency} EQUAL 0)
+		message(FATAL_ERROR "Dependency ${${dependency}.name} failed to configure... aborting")
+	endif()
+	
+	dependency_build_additional_flags(${dependency} additional-flags)
+	
+	execute_process(
+		COMMAND ${CMAKE_COMMAND} --build . --target install ${additional-flags}
+		WORKING_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}/${config-suffix}"
+		RESULT_VARIABLE result-build-dependency
+	)
+	
+	if (${result-build-dependency} EQUAL 0)
+		write_dependency_revision_file(${dependency})
+	else()
+		message(FATAL_ERROR "Dependency ${${dependency}.name} failed to configure... aborting")
+	endif()
+	
+	check_dependency_exist(${dependency} "${cmake-flags}" dependency-${${dependency}.name}-exists)
+endfunction()
+
+function(dependency_has_local_source_dir dependency return-value)
+	if(IS_DIRECTORY "${sources-path}/${${dependency}.name}")
+		set(${return-value} ON PARENT_SCOPE)
+	else()
+		set(${return-value} OFF PARENT_SCOPE)
+	endif()
+endfunction()
+
+function(update_dependency_list cmake-flags dependency-list)
 	foreach(dependency-id ${${dependency-list}})
 		set(dependency ${dependency-list}_${dependency-id})
 		if(NOT ${${dependency}._type} STREQUAL "object")
@@ -584,7 +652,7 @@ function(update_dependency_list dependency-list)
 		endif()
 		
 		assert_dependency_json_valid(${dependency})
-		check_dependency_exist(${dependency})
+		check_dependency_exist(${dependency} "${cmake-flags}" dependency-${${dependency}.name}-exists)
 	endforeach()
 	
 	file(READ "${test-path}/CMakeCache.txt" test-cache)
@@ -592,27 +660,30 @@ function(update_dependency_list dependency-list)
 	foreach(dependency-id ${${dependency-list}})
 		set(dependency ${dependency-list}_${dependency-id})
 		
-		if (${check-dependency-${${dependency}.name}-result})
-			if(IS_DIRECTORY "${sources-path}/${${dependency}.name}")
-				check_local_options(${dependency})
-				
-				if(check-local-options-${${dependency}.name}-result)
-					message("${${dependency}.name} options changed... rebuilding")
-					build_dependency(${dependency})
-				else()
-					message("${${dependency}.name} found")
-				endif()
+		dependency_has_local_source_dir(${dependency} is-local)
+		if (NOT ${dependency-${${dependency}.name}-exists})
+			message("${${dependency}.name} not found... installing")
+			update_dependency(${dependency} "${cmake-flags}")
+		elseif(is-local)
+			dependency_current_revision(${dependency} current-revision)
+			dependency_built_revision(${dependency} built-revision)
+			dependency_built_options(${dependency} built-options)
+			if(NOT "${built-options}" STREQUAL "${${dependency}.options}")
+				message("${${dependency}.name} options changed... rebuilding")
+				update_dependency(${dependency} "${cmake-flags}")
+			elseif(NOT "${current-revision}" STREQUAL "${built-revision}")
+				message("${${dependency}.name} build out of date... rebuilding")
+				update_dependency(${dependency} "${cmake-flags}")
 			else()
 				message("${${dependency}.name} found")
 			endif()
 		else()
-			message("${${dependency}.name} not found... installing")
-			update_dependency(${dependency})
+			message("${${dependency}.name} found")
 		endif()
 	endforeach()
 endfunction()
 
-function(update_local_dependency_list dependency-list)
+function(update_local_dependency_list cmake-flags dependency-list)
 	foreach(dependency-id ${${dependency-list}})
 		set(dependency ${dependency-list}_${dependency-id})
 		if(NOT ${${dependency}._type} STREQUAL "object")
@@ -620,59 +691,105 @@ function(update_local_dependency_list dependency-list)
 		endif()
 		
 		assert_dependency_json_valid(${dependency})
-		check_dependency_exist(${dependency})
+		check_dependency_exist(${dependency} "${cmake-flags}" dependency-${${dependency}.name}-exists)
 	endforeach()
 
 	file(READ "${test-path}/CMakeCache.txt" test-cache)
 
 	foreach(dependency-id ${${dependency-list}})
 		set(dependency ${dependency-list}_${dependency-id})
-		if (${check-dependency-${${dependency}.name}-result})
-			update_local_dependency(${dependency})
+		if (${dependency-${${dependency}.name}-exists})
+			update_local_dependency(${dependency} ${test-cache} "${cmake-flags}")
 		endif()
 	endforeach()
 	
-	update_dependency_list(${dependency-list})
+	update_dependency_list(${dependency-list} "${cmake-flags}")
 endfunction()
 
-function(check_local_options)
-	check_local_dependency(${dependency})
+function(dependency_current_revision dependency return-value)
+	execute_process(
+		COMMAND ${GIT_EXECUTABLE} rev-parse HEAD
+		OUTPUT_VARIABLE revision-current
+		RESULT_VARIABLE revision-current-result
+		ERROR_VARIABLE revision-current-error
+		WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
+		ERROR_QUIET
+	)
+	
+	if ("${revision-current-result}" EQUAL 0)
+		set(${return-value} "${revision-current}" PARENT_SCOPE)
+	else()
+		message(FATAL_ERROR "Git failed to retrieve current revision with output: ${revision-current-error}")
+	endif()
+endfunction()
+
+function(dependency_built_options dependency return-value)
+	if(EXISTS "${sources-path}/${${dependency}.name}/${build-directory-name}/${config-suffix}/${built-options-file-name}")
+		file(READ "${sources-path}/${${dependency}.name}/${build-directory-name}/${config-suffix}/${built-options-file-name}" built-options-string)
+		set(${return-value} "${built-options-string}" PARENT_SCOPE)
+	else()
+		set(${return-value} "" PARENT_SCOPE)
+	endif()
+endfunction()
+
+function(dependency_built_revision dependency return-value)
+	if(EXISTS "${sources-path}/${${dependency}.name}/${build-directory-name}/${config-suffix}/${built-revision-file-name}")
+		file(READ "${sources-path}/${${dependency}.name}/${build-directory-name}/${config-suffix}/${built-revision-file-name}" built-revision-string)
+		set(${return-value} "${built-revision-string}" PARENT_SCOPE)
+	else()
+		set(${return-value} "" PARENT_SCOPE)
+	endif()
+endfunction()
+
+function(should_rebuild_dependency dependency test-build-cache return-value)
+	if ("${test-build-cache}" STREQUAL "ASSUME_LOCAL")
+		set(is-local-dependency ON)
+	else()
+		check_local_dependency(${dependency} ${test-build-cache} is-local-dependency)
+	endif()
+	
+	if(is-local-dependency)
+		dependency_current_revision(${dependency} current-revision)
+		dependency_built_revision(${dependency} built-revision)
+		dependency_built_options(${dependency} built-options)
+		if("${current-revision}" STREQUAL "${built-revision}" AND "${built-options}" STREQUAL "${${dependency}.options}")
+			set(${return-value} OFF PARENT_SCOPE)
+		else()
+			set(${return-value} ON PARENT_SCOPE)
+		endif()
+	else()
+		set(${return-value} OFF PARENT_SCOPE)
+	endif()
+endfunction()
+
+function(check_local_options test-build-cache return-value)
+	check_local_dependency(${dependency} ${test-build-cache} is-local-package)
 	set(check-local-options OFF)
 	
-	if(check-local-dependency-${${dependency}.name}-result)
-		if(DEFINED ${dependency}.options)
-			if(EXISTS "${sources-path}/${${dependency}.name}/${build-directory-name}/${options-file-name}")
-				file(READ "${sources-path}/${${dependency}.name}/${build-directory-name}/${options-file-name}" options-string)
-				
-				if("${options-string}" STREQUAL "${${dependency}.options}")
-					set(check-local-options OFF)
-				else()
-					set(check-local-options ON)
-				endif()
-			else()
-				set(check-local-options ON)
-			endif()
+	if(is-local-package)
+		dependency_built_options(${dependency} built-options)
+		
+		if("${built-options}" STREQUAL "${${dependency}.options}")
+			set(check-local-options OFF)
 		else()
-			if(EXISTS "${sources-path}/${${dependency}.name}/${build-directory-name}/${options-file-name}")
-				set(check-local-options ON)
-			else()
-				set(check-local-options OFF)
-			endif()
+			set(check-local-options ON)
 		endif()
 	endif()
+	
 	if (${check-local-options})
-		set(check-local-options-${${dependency}.name}-result ON PARENT_SCOPE)
+		set(${return-value} ON PARENT_SCOPE)
 	else()
-		set(check-local-options-${${dependency}.name}-result OFF PARENT_SCOPE)
+		set(${return-value} OFF PARENT_SCOPE)
 	endif()
 endfunction()
 
-function(check_local_dependency dependency)
+function(check_local_dependency dependency test-build-cache return-value)
 	set(check-local-package OFF)
-	if(IS_DIRECTORY "${sources-path}/${${dependency}.name}")
-		string(REGEX MATCH "${${dependency}.name}_DIR:PATH=[^\n]*" matched-path "${test-cache}")
+	dependency_has_local_source_dir(${dependency} is-local)
+	if(is-local)
+		string(REGEX MATCH "${${dependency}.name}_DIR:PATH=[^\n]*" matched-path "${test-build-cache}")
 		if ("${matched-path}" STREQUAL "")
-			if(ARGC GREATER 1 AND "${ARGV1}" STREQUAL "SKIPPING_VERBOSE")
+			if(ARGC GREATER 3 AND "${ARGV3}" STREQUAL "SKIPPING_VERBOSE")
 				message("${${dependency}.name} is not a cmake package... skipping")
 			endif()
 		else()
@@ -686,18 +803,18 @@ function(check_local_dependency dependency)
 	endif()
 	
 	if (${check-local-package})
-		set(check-local-dependency-${${dependency}.name}-result ON PARENT_SCOPE)
+		set(${return-value} ON PARENT_SCOPE)
 	else()
-		set(check-local-dependency-${${dependency}.name}-result OFF PARENT_SCOPE)
+		set(${return-value} OFF PARENT_SCOPE)
 	endif()
 endfunction()
 
-function(check_branch_status dependency)
+function(check_branch_status dependency return-value)
 	set(check-branch-status OFF)
 	
 	if(DEFINED ${dependency}.branch)
 		execute_process(
-			COMMAND git symbolic-ref -q --short HEAD
+			COMMAND ${GIT_EXECUTABLE} symbolic-ref -q --short HEAD
 			OUTPUT_VARIABLE branch-result
 			WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
 			ERROR_QUIET
@@ -710,7 +827,7 @@ function(check_branch_status dependency)
 		endif()
 	else()
 		execute_process(
-			COMMAND git describe --tags --exact-match
+			COMMAND ${GIT_EXECUTABLE} describe --tags --exact-match
 			OUTPUT_VARIABLE branch-result
 			WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
 			ERROR_QUIET
@@ -724,20 +841,19 @@ function(check_branch_status dependency)
 	endif()
 	
 	if (${check-branch-status})
-		set(check-branch-status-${${dependency}.name}-result ON PARENT_SCOPE)
+		set(${return-value} ON PARENT_SCOPE)
 	else()
-		set(check-branch-status-${${dependency}.name}-result OFF PARENT_SCOPE)
+		set(${return-value} OFF PARENT_SCOPE)
 	endif()
 endfunction()
 
-function(update_local_dependency dependency)
-	check_local_dependency(${dependency} SKIPPING_VERBOSE)
+function(update_local_dependency dependency test-build-cache cmake-flags)
+	check_local_dependency(${dependency} ${test-build-cache} is-local-package SKIPPING_VERBOSE)
 	
-	if(check-local-dependency-${${dependency}.name}-result)
-		check_branch_status(${dependency})
+	if(is-local-package)
+		check_branch_status(${dependency} should-checkout)
 		
-		set(should-build OFF)
-		if(check-branch-status-${${dependency}.name}-result)
+		if(${should-checkout})
 			if (DEFINED ${dependency}.tag)
 				set(checkout-argument "${${dependency}.tag}")
 				message("${${dependency}.name}: checkout tag ${${dependency}.tag}")
@@ -747,19 +863,18 @@ function(update_local_dependency dependency)
 			endif()
 			
 			execute_process(
-				COMMAND git fetch
+				COMMAND ${GIT_EXECUTABLE} fetch
 				WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
 				OUTPUT_QUIET
 			)
 			
 			execute_process(
-				COMMAND git checkout ${checkout-argument}
+				COMMAND ${GIT_EXECUTABLE} checkout ${checkout-argument}
 				WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
 				OUTPUT_QUIET
 			)
 			
 			message("${${dependency}.name} HEAD changed... rebuilding")
-			set(should-build ON)
 		endif()
 		
 		if (DEFINED ${dependency}.branch)
@@ -773,74 +888,147 @@ function(update_local_dependency dependency)
 			endif()
 			
 			execute_process(
-				COMMAND git pull ${recurse-argument}
+				COMMAND ${GIT_EXECUTABLE} pull ${recurse-argument}
 				OUTPUT_VARIABLE pull-result
 				WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
 			)
 			
-			if(NOT "${pull-result}" MATCHES "Already up")
+			dependency_current_revision(${dependency} pulled-revision)
+			dependency_built_revision(${dependency} built-revision)
+			
+			if(NOT "${pulled-revision}" STREQUAL "${built-revision}")
 				message("${${dependency}.name} branch updated... rebuilding")
-				set(should-build ON)
 			endif()
 		endif()
 		
-		check_local_options(${dependency})
-		
-		if(check-local-options-${${dependency}.name}-result)
+		check_local_options(${dependency} options-changed)
+		if(options-changed)
 			message("${${dependency}.name} options changed... rebuilding")
-			set(should-build ON)
 		endif()
 		
+		should_rebuild_dependency(${dependency} ${test-build-cache} should-build)
 		if(should-build)
-			build_dependency(${dependency})
+			build_dependency(${dependency} "${cmake-flags}")
 		endif()
 	endif()
 	
-	if(EXISTS "${sources-path}/${${dependency}.name}/lockfile.json")
-		file(READ "${sources-path}/${${dependency}.name}/lockfile.json" lockfile_content_${${dependency}.name})
+	if(EXISTS "${sources-path}/${${dependency}.name}/sbg-manifest.json")
+		file(READ "${sources-path}/${${dependency}.name}/sbg-manifest.json" manifest_content_${${dependency}.name})
 		
-		ParseJson(lockfile_${${dependency}.name} "${lockfile_content_${${dependency}.name}}")
+		ParseJson(manifest_${${dependency}.name} "${manifest_content_${${dependency}.name}}")
 		
-		if(NOT "${lockfile_${${dependency}.name}._type}" STREQUAL "object")
-			message(FATAL_ERROR "The lockfile for dependency \"${${dependency}.name}\" must contain a root object")
+		if(NOT "${manifest_${${dependency}.name}._type}" STREQUAL "object")
+			message(FATAL_ERROR "The manifest for dependency \"${${dependency}.name}\" must contain a root object")
 		endif()
 		
-		if (NOT DEFINED lockfile_${${dependency}.name}.dependencies)
-			message(FATAL_ERROR "The lockfile for dependency \"${${dependency}.name}\" does not contains dependencies or is invalid")
+		if (NOT DEFINED manifest_${${dependency}.name}.dependencies)
+			message(FATAL_ERROR "The manifest for dependency \"${${dependency}.name}\" does not contains dependencies or is invalid")
 		endif()
 		
-		update_local_dependency_list(lockfile_${${dependency}.name}.dependencies)
+		update_local_dependency_list(manifest_${${dependency}.name}.dependencies)
 	endif()
+endfunction()
+
+# function(external_pkg_path_list dependency-list return-value)
+# 	set(${return-value} "")
+# 	set(${return-value}._type "object")
+# 	foreach(dependency-id ${${dependency-list}})
+# 		set(dependency ${dependency-list}_${dependency-id})
+# 		check_dependency_exist(${dependency} dependency-${${dependency}.name}-exists)
+# 	endforeach()
+# 	
+# 	foreach(dependency-id ${${dependency-list}})
+# 		set(dependency ${dependency-list}_${dependency-id})
+# 		find_file(dependency-data ${${dependency}.name}-${current-profile}.cmake)
+# 		if(NOT "${dependency-data}" STREQUAL "dependency-data-NOTFOUND")
+# 			include(${dependency-data})
+# 			list(APPEND ${return-value} "${${dependency}.name}")
+# 			set(${return-value}.name._type "object")
+# 			set(${return-value}.name "module-path;prefix-path;manifest-path")
+# 			set(${return-value}.name.module-path "${found-pkg-${${dependency}.name}-module-path}")
+# 			set(${return-value}.name.prefix-path "${found-pkg-${${dependency}.name}-prefix-path}")
+# 			set(${return-value}.name.manifest-path "${found-pkg-${${dependency}.name}-manifest-path}")
+# 		endif()
+# 	endforeach()
+# endfunction()
+
+function(current_cmake_arguments starts-at return-value)
+	set(cmake-arguments "")
+	math(EXPR cmake-arguments-end "${CMAKE_ARGC} - 1")
+	foreach(arg RANGE ${cmake-arguments-starts} ${cmake-arguments-end})
+		list(APPEND cmake-arguments "${CMAKE_ARGV${arg}}")
+	endforeach()
+	set(${return-value} ${cmake-arguments} PARENT_SCOPE)
 endfunction()
 
 #
 # Commands Implementation
 #
+if(NOT "${manifest.dependencies._type}" STREQUAL "array")
+	message(FATAL_ERROR "The manifest must an an array 'dependencies' member of the root object")
+endif()
 
 if(${CMAKE_ARGV3} STREQUAL "setup")
-	if(DEFINED lockfile.cmake-module-path)
-		set(module-path-setup "list(APPEND CMAKE_MODULE_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/${lockfile.cmake-module-path}\")")
+	if(${CMAKE_ARGC} GREATER 4)
+		if(NOT "${CMAKE_ARGV4}" MATCHES "^\\-.*")
+			select_profile(CMAKE_ARGV4)
+			set(cmake-arguments-starts 5)
+		else()
+			set(cmake-arguments-starts 4)
+		endif()
+		
+		current_cmake_arguments(${cmake-arguments-starts} cmake-arguments)
+		string(REPLACE ";" " " cmake-arguments-string "${cmake-arguments}")
+		
+		if(DEFINED manifest.cmake-module-path)
+			set(module-path-setup "list(APPEND CMAKE_MODULE_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/${manifest.cmake-module-path}\")")
+			set(module-path-argument "-DCMAKE_MODULE_PATH=\"${current-directory}/${manifest.cmake-module-path}\"")
+		else()
+			set(module-path-setup "")
+			set(module-path-argument "")
+		endif()
+		
+		file(WRITE "${installation-path}/${current-profile}-profile.cmake" "
+file(WRITE \"\${CMAKE_BINARY_DIR}/subgine-pkg-\${project-name}-${current-profile}.cmake\" \"
+	set(found-pkg-\${project-name}-prefix-path \\\"${library-path}\\\")
+	set(found-pkg-\${project-name}-module-path \\\"${manifest.cmake-module-path}\\\")
+	set(found-pkg-\${project-name}-manifest-path \\\"\${CMAKE_SOURCE_DIR}/sbg-manifest.json\\\")
+\")
+
+list(APPEND CMAKE_PREFIX_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/${manifest.installation-path}/${library-directory-name}/${current-profile}/\")
+${module-path-setup}\n")
+		file(WRITE "${config-path}/${current-profile}-arguments.txt" "-DCMAKE_PREFIX_PATH=\"${library-path}\";${cmake-arguments};${module-path-argument}")
 	else()
-		set(module-path-setup "")
+		message("Usage: subgine-pkg setup [<profile>] <cmake arguments...>")
 	endif()
-	
-	file(WRITE "${current-directory}/subgine-pkg.cmake" "list(APPEND CMAKE_PREFIX_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/${lockfile.installation-path}/${library-directory-name}/\")\n${module-path-setup}\n")
 elseif(${CMAKE_ARGV3} STREQUAL "install")
-	update_dependency_list(lockfile.dependencies)
-elseif(${CMAKE_ARGV3} STREQUAL "update")
-	update_local_dependency_list(lockfile.dependencies)
-elseif(${CMAKE_ARGV3} STREQUAL "clean")
-	if(NOT "${lockfile.dependencies._type}" STREQUAL "array")
-		message(FATAL_ERROR "The lockfile must an an array 'dependencies' member of the root object")
+	select_profile(CMAKE_ARGV4)
+	
+	if(EXISTS "${config-path}/${current-profile}-arguments.txt")
+		file(READ "${config-path}/${current-profile}-arguments.txt" cmake-arguments)
+	else()
+		message(FATAL_ERROR "Cannot read file \"${config-path}/${current-profile}-arguments.txt\". Run 'subgine-pkg setup' to create it.")
 	endif()
 	
-	foreach(dependency-id ${lockfile.dependencies})
-		if(NOT ${lockfile.dependencies_${dependency-id}._type} STREQUAL "object")
+	update_dependency_list(manifest.dependencies ${cmake-arguments})
+elseif(${CMAKE_ARGV3} STREQUAL "update")
+	select_profile(CMAKE_ARGV4)
+	
+	if(EXISTS "${config-path}/${current-profile}-arguments.txt")
+		file(READ "${config-path}/${current-profile}-arguments.txt" cmake-arguments)
+	else()
+		message(FATAL_ERROR "Cannot read file \"${config-path}/${current-profile}-arguments.txt\". Run 'subgine-pkg setup' to create it.")
+	endif()
+	
+	update_local_dependency_list(manifest.dependencies ${cmake-arguments})
+elseif(${CMAKE_ARGV3} STREQUAL "clean")
+	foreach(dependency-id ${manifest.dependencies})
+		if(NOT ${manifest.dependencies_${dependency-id}._type} STREQUAL "object")
 			message(FATAL_ERROR "The dependency array must only contain objects")
 		endif()
 		
-		if(IS_DIRECTORY "${sources-path}/${lockfile.dependencies_${dependency-id}.name}/${build-directory-name}")
-			file(REMOVE_RECURSE "${sources-path}/${lockfile.dependencies_${dependency-id}.name}/${build-directory-name}")
+		if(IS_DIRECTORY "${sources-path}/${manifest.dependencies_${dependency-id}.name}/${build-directory-name}")
+			file(REMOVE_RECURSE "${sources-path}/${manifest.dependencies_${dependency-id}.name}/${build-directory-name}")
 		endif()
 	endforeach()
 	
@@ -858,7 +1046,30 @@ elseif(${CMAKE_ARGV3} STREQUAL "prune")
 	if(IS_DIRECTORY "${library-path}")
 		file(REMOVE_RECURSE "${library-path}")
 	endif()
-	
+elseif(${CMAKE_ARGV3} STREQUAL "remove")
+	if("${CMAKE_ARGV4}" STREQUAL "")
+		message("Usage: subgine-pkg remove <package-name>")
+	else()
+		foreach(dependency-id ${manifest.dependencies})
+			if("${manifest.dependencies_${dependency-id}.name}" STREQUAL "${CMAKE_ARGV4}")
+				set(dependency "manifest.dependencies_${dependency-id}")
+			endif()
+		endforeach()
+		if(DEFINED dependency AND DEFINED ${dependency}.name)
+			if(NOT IS_DIRECTORY "${sources-path}/${${dependency}.name}" AND NOT IS_DIRECTORY "${library-path}/${${dependency}.name}")
+				message("Dependency \"${${dependency}.name}\" not installed locally... skipping")
+			endif()
+			if(IS_DIRECTORY "${sources-path}/${${dependency}.name}")
+				file(REMOVE_RECURSE "${sources-path}/${${dependency}.name}")
+			endif()
+			if(IS_DIRECTORY "${library-path}/${${dependency}.name}")
+				file(REMOVE_RECURSE "${library-path}/${${dependency}.name}")
+			endif()
+		else()
+			message(FATAL_ERROR "Dependency \"${CMAKE_ARGV4}\" does not exists, cannot remove")
+		endif()
+	endif()
 endif()
+
 endif()
 endif()

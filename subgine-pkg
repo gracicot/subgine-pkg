@@ -5,7 +5,7 @@ BASEDIR=$(dirname "$0")
 CMAKE_PATH={%CMAKEPATH%}
 if [ ! -z "$CMAKE_PATH" ]
 then
-    PATH="$CMAKE_PATH:$PATH" cmake -P "$BASEDIR/subgine-pkg.cmake" $@
+    $CMAKE_PATH/cmake -P "$BASEDIR/subgine-pkg.cmake" $@
 else
     cmake -P "$BASEDIR/subgine-pkg.cmake" $@
 fi
