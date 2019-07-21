@@ -469,12 +469,6 @@ function(check_dependency_exist dependency cmake-flags return-value)
 		file(MAKE_DIRECTORY "${test-path}")
 	endif()
 	
-	if(DEFINED manifest.cmake-module-path)
-		set(cmake-module-path-command "list(APPEND CMAKE_MODULE_PATH \"${current-directory}/${manifest.cmake-module-path}\")")
-	else()
-		set(cmake-module-path-command "")
-	endif()
-	
 	dependency_cmake_version_check(${dependency} cmake-version-check)
 	
 	if (DEFINED ${dependency}.component)
@@ -489,8 +483,40 @@ function(check_dependency_exist dependency cmake-flags return-value)
 		set(target-cmake-check "")
 	endif()
 	
+	file(WRITE "${test-path}/subgine-package-file.cmake" "cmake_minimum_required(VERSION 3.14)\nunset(${${dependency}.name}_DIR CACHE)\n${cmake-module-path-command}\nlist(APPEND CMAKE_PREFIX_PATH \"${library-path}/${current-profile}/\")\nfind_file(sbg-package-config-file subgine-pkg-${${dependency}.name}-${current-profile}.cmake)\nmessage(\"\${sbg-package-config-file}\")")
 	
-	file(WRITE "${test-path}/CMakeLists.txt" "cmake_minimum_required(VERSION 3.14)\nunset(${${dependency}.name}_DIR CACHE)\n${cmake-module-path-command}\nlist(APPEND CMAKE_PREFIX_PATH \"${library-path}/${current-profile}/\")\nfind_package(${${dependency}.name} ${cmake-version-check} ${dependency_component} REQUIRED)\n${target-cmake-check}")
+	
+	execute_process(
+		COMMAND ${CMAKE_COMMAND} ${cmake-flags} -P "${test-path}/subgine-package-file.cmake"
+		ERROR_VARIABLE sbg-package-config-file
+		OUTPUT_QUIET
+	)
+	
+	set(check-prefix-paths "${library-path}/${current-profile}")
+	
+	if(DEFINED manifest.cmake-module-path)
+		set(check-module-paths "${current-directory}/${manifest.cmake-module-path}")
+	else()
+		set(check-module-paths "")
+	endif()
+	
+	string(STRIP "${sbg-package-config-file}" sbg-package-config-file)
+	if(NOT "${sbg-package-config-file}" STREQUAL "sbg-package-config-file-NOTFOUND")
+		include("${sbg-package-config-file}")
+		list(APPEND check-prefix-paths ${found-pkg-${${dependency}.name}-prefix-path})
+		if(NOT "${found-pkg-${${dependency}.name}-module-path}" STREQUAL "")
+			list(APPEND check-module-paths "${found-pkg-${${dependency}.name}-module-path}")
+		endif()
+	endif()
+	
+	if(NOT "${check-module-paths}" STREQUAL "")
+		set(cmake-module-path-command "list(APPEND CMAKE_MODULE_PATH \"${current-directory}/${manifest.cmake-module-path}\")")
+	else()
+		set(cmake-module-path-command "")
+	endif()
+	
+	file(WRITE "${test-path}/CMakeLists.txt" "cmake_minimum_required(VERSION 3.14)\nunset(${${dependency}.name}_DIR CACHE)\n${cmake-module-path-command}\nlist(APPEND CMAKE_PREFIX_PATH \"${check-prefix-paths}\")\nfind_package(${${dependency}.name} ${cmake-version-check} ${dependency_component} REQUIRED)\n${target-cmake-check}")
+	
 	execute_process(
 		COMMAND ${CMAKE_COMMAND} -G "${used-generator}" -DCMAKE_FIND_PACKAGE_NO_PACKAGE_REGISTRY=ON ${cmake-flags} -S "${test-path}" -B "${test-path}"
 		RESULT_VARIABLE result-check-dep
@@ -616,7 +642,6 @@ function(build_dependency dependency cmake-flags)
 		WORKING_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}/${config-suffix}"
 		RESULT_VARIABLE result-build-dependency
 		ERROR_VARIABLE build-dependency-error
-		ERROR_QUIET
 		OUTPUT_QUIET
 	)
 	
@@ -638,7 +663,6 @@ function(build_dependency dependency cmake-flags)
 		WORKING_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}/${config-suffix}"
 		RESULT_VARIABLE result-build-dependency
 		ERROR_VARIABLE build-dependency-error
-		ERROR_QUIET
 		OUTPUT_QUIET
 	)
 	
@@ -703,7 +727,7 @@ function(update_dependency_list dependency-list cmake-flags)
 	endforeach()
 endfunction()
 
-function(update_local_dependency_list cmake-flags dependency-list)
+function(update_local_dependency_list dependency-list cmake-flags)
 	foreach(dependency-id ${${dependency-list}})
 		set(dependency ${dependency-list}_${dependency-id})
 		if(NOT ${${dependency}._type} STREQUAL "object")
@@ -733,8 +757,6 @@ function(dependency_current_revision dependency return-value)
 		OUTPUT_VARIABLE revision-current
 		RESULT_VARIABLE revision-current-result
 		ERROR_VARIABLE revision-current-error
-		ERROR_QUIET
-		OUTPUT_QUIET
 	)
 	
 	if ("${revision-current-result}" EQUAL 0)
@@ -840,7 +862,6 @@ function(check_branch_status dependency return-value)
 			OUTPUT_VARIABLE branch-result
 			WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
 			ERROR_QUIET
-			OUTPUT_QUIET
 		)
 		
 		string(REGEX REPLACE "\n$" "" branch-result "${branch-result}")
@@ -854,7 +875,6 @@ function(check_branch_status dependency return-value)
 			OUTPUT_VARIABLE branch-result
 			WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
 			ERROR_QUIET
-			OUTPUT_QUIET
 		)
 		
 		string(REGEX REPLACE "\n$" "" branch-result "${branch-result}")
@@ -902,7 +922,7 @@ function(update_local_dependency dependency test-build-cache cmake-flags)
 		endif()
 		
 		if (DEFINED ${dependency}.branch)
-			message("pulling ${${dependency}.name}...")
+			message("Pulling ${${dependency}.name}...")
 			
 			set(recurse-argument "")
 			if (DEFINED ${dependency}.fetch-submodules)
@@ -916,7 +936,6 @@ function(update_local_dependency dependency test-build-cache cmake-flags)
 				OUTPUT_VARIABLE pull-result
 				WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
 				ERROR_QUIET
-				OUTPUT_QUIET
 			)
 			
 			dependency_current_revision(${dependency} pulled-revision)
@@ -1004,7 +1023,6 @@ if(${CMAKE_ARGV3} STREQUAL "setup")
 		endif()
 		
 		current_cmake_arguments(${cmake-arguments-starts} cmake-arguments)
-		string(REPLACE ";" " " cmake-arguments-string "${cmake-arguments}")
 		
 		if(DEFINED manifest.cmake-module-path)
 			set(module-path-setup "list(APPEND CMAKE_MODULE_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/${manifest.cmake-module-path}\")")
@@ -1015,15 +1033,15 @@ if(${CMAKE_ARGV3} STREQUAL "setup")
 		endif()
 		
 		file(WRITE "${installation-path}/${current-profile}-profile.cmake" "
-file(WRITE \"\${CMAKE_BINARY_DIR}/subgine-pkg-\${project-name}-${current-profile}.cmake\" \"
-	set(found-pkg-\${project-name}-prefix-path \\\"${library-path}\\\")
-	set(found-pkg-\${project-name}-module-path \\\"${manifest.cmake-module-path}\\\")
-	set(found-pkg-\${project-name}-manifest-path \\\"\${CMAKE_SOURCE_DIR}/sbg-manifest.json\\\")
+list(APPEND CMAKE_PREFIX_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/${manifest.installation-path}/${library-directory-name}/${current-profile}/\")
+file(WRITE \"\${CMAKE_BINARY_DIR}/subgine-pkg-\${PROJECT_NAME}-${current-profile}.cmake\" \"
+	set(found-pkg-\${PROJECT_NAME}-prefix-path \\\"\${CMAKE_PREFIX_PATH}\\\")
+	set(found-pkg-\${PROJECT_NAME}-module-path \\\"${manifest.cmake-module-path}\\\")
+	set(found-pkg-\${PROJECT_NAME}-manifest-path \\\"\${CMAKE_SOURCE_DIR}/sbg-manifest.json\\\")
 \")
 
-list(APPEND CMAKE_PREFIX_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/${manifest.installation-path}/${library-directory-name}/${current-profile}/\")
 ${module-path-setup}\n")
-		file(WRITE "${config-path}/${current-profile}-arguments.txt" "-DCMAKE_PREFIX_PATH=\"${library-path}\";${cmake-arguments};${module-path-argument}")
+		file(WRITE "${config-path}/${current-profile}-arguments.txt" "${cmake-arguments};${module-path-argument}")
 	else()
 		message("Usage: subgine-pkg setup [<profile>] <cmake arguments...>")
 	endif()
@@ -1046,7 +1064,7 @@ elseif(${CMAKE_ARGV3} STREQUAL "update")
 		message(FATAL_ERROR "Cannot read file \"${config-path}/${current-profile}-arguments.txt\". Run 'subgine-pkg setup' to create it.")
 	endif()
 	
-	update_local_dependency_list(manifest.dependencies ${cmake-arguments})
+	update_local_dependency_list(manifest.dependencies "${cmake-arguments}")
 elseif(${CMAKE_ARGV3} STREQUAL "clean")
 	foreach(dependency-id ${manifest.dependencies})
 		if(NOT ${manifest.dependencies_${dependency-id}._type} STREQUAL "object")
