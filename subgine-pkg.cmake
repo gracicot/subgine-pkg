@@ -1,5 +1,4 @@
-cmake_policy(SET CMP0012 NEW)
-cmake_policy(SET CMP0057 NEW)
+cmake_minimum_required(VERSION 3.14)
 
 #
 # Help Printing
@@ -491,10 +490,9 @@ function(check_dependency_exist dependency cmake-flags return-value)
 	endif()
 	
 	
-	file(WRITE "${test-path}/CMakeLists.txt" "cmake_minimum_required(VERSION 3.15)\nunset(${${dependency}.name}_DIR CACHE)\n${cmake-module-path-command}\nlist(APPEND CMAKE_PREFIX_PATH \"${library-path}/${current-profile}/\")\nfind_package(${${dependency}.name} ${cmake-version-check} ${dependency_component} REQUIRED)\n${target-cmake-check}")
+	file(WRITE "${test-path}/CMakeLists.txt" "cmake_minimum_required(VERSION 3.14)\nunset(${${dependency}.name}_DIR CACHE)\n${cmake-module-path-command}\nlist(APPEND CMAKE_PREFIX_PATH \"${library-path}/${current-profile}/\")\nfind_package(${${dependency}.name} ${cmake-version-check} ${dependency_component} REQUIRED)\n${target-cmake-check}")
 	execute_process(
-		COMMAND ${CMAKE_COMMAND} -G "${used-generator}" -DCMAKE_FIND_PACKAGE_NO_PACKAGE_REGISTRY=ON ${cmake-flags} .
-		WORKING_DIRECTORY "${test-path}"
+		COMMAND ${CMAKE_COMMAND} -G "${used-generator}" -DCMAKE_FIND_PACKAGE_NO_PACKAGE_REGISTRY=ON ${cmake-flags} -S "${test-path}" -B "${test-path}"
 		RESULT_VARIABLE result-check-dep
 		OUTPUT_QUIET
 		ERROR_QUIET
@@ -512,10 +510,12 @@ function(update_dependency dependency cmake-flags)
 		file(MAKE_DIRECTORY "${sources-path}")
 	endif()
 	if(IS_DIRECTORY "${sources-path}/${${dependency}.name}/.git")
-		message("fetching updates for ${${dependency}.name}")
+		message(STATUS "Fetching updates for ${${dependency}.name}")
 		execute_process(
 			COMMAND ${GIT_EXECUTABLE} fetch
 			WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
+			ERROR_QUIET
+			OUTPUT_QUIET
 		)
 	else()
 		file(REMOVE_RECURSE "${sources-path}/${${dependency}.name}")
@@ -542,6 +542,8 @@ function(update_dependency dependency cmake-flags)
 	execute_process(
 		COMMAND ${GIT_EXECUTABLE} checkout ${checkout-argument}
 		WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
+		ERROR_QUIET
+		OUTPUT_QUIET
 	)
 	
 	if(EXISTS "${sources-path}/${${dependency}.name}/sbg-manifest.json")
@@ -597,7 +599,7 @@ function(dependency_build_additional_flags dependency return-value)
 	endif()
 endfunction()
 
-function(build_dependency cmake-flags dependency)
+function(build_dependency dependency cmake-flags)
 	if(NOT IS_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}/${config-suffix}")
 		file(MAKE_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}/${config-suffix}")
 	endif()
@@ -613,25 +615,43 @@ function(build_dependency cmake-flags dependency)
 			-DCMAKE_EXPORT_NO_PACKAGE_REGISTRY=ON
 		WORKING_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}/${config-suffix}"
 		RESULT_VARIABLE result-build-dependency
+		ERROR_VARIABLE build-dependency-error
+		ERROR_QUIET
+		OUTPUT_QUIET
 	)
 	
+	message(STATUS "Configuring ${${dependency}.name}...")
+	
 	if (NOT ${result-build-dependency} EQUAL 0)
-		message(FATAL_ERROR "Dependency ${${dependency}.name} failed to configure... aborting")
+		message("Dependency ${${dependency}.name} failed to configure... aborting")
+		message("Failed to configure with output:")
+		message("${build-dependency-error}")
+		message(FATAL_ERROR "stopping due to previous errors")
 	endif()
 	
 	dependency_build_additional_flags(${dependency} additional-flags)
+	
+	message(STATUS "Building ${${dependency}.name}...")
 	
 	execute_process(
 		COMMAND ${CMAKE_COMMAND} --build . --target install ${additional-flags}
 		WORKING_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}/${config-suffix}"
 		RESULT_VARIABLE result-build-dependency
+		ERROR_VARIABLE build-dependency-error
+		ERROR_QUIET
+		OUTPUT_QUIET
 	)
 	
 	if (${result-build-dependency} EQUAL 0)
 		write_dependency_revision_file(${dependency})
 	else()
-		message(FATAL_ERROR "Dependency ${${dependency}.name} failed to configure... aborting")
+		message("Dependency ${${dependency}.name} failed to build... aborting")
+		message("Failed to build with output:")
+		message("${build-dependency-error}")
+		message(FATAL_ERROR "stopping due to previous errors")
 	endif()
+	
+	message(STATUS "Dependency ${${dependency}.name} installed")
 	
 	check_dependency_exist(${dependency} "${cmake-flags}" dependency-${${dependency}.name}-exists)
 endfunction()
@@ -644,7 +664,7 @@ function(dependency_has_local_source_dir dependency return-value)
 	endif()
 endfunction()
 
-function(update_dependency_list cmake-flags dependency-list)
+function(update_dependency_list dependency-list cmake-flags)
 	foreach(dependency-id ${${dependency-list}})
 		set(dependency ${dependency-list}_${dependency-id})
 		if(NOT ${${dependency}._type} STREQUAL "object")
@@ -675,10 +695,10 @@ function(update_dependency_list cmake-flags dependency-list)
 				message("${${dependency}.name} build out of date... rebuilding")
 				update_dependency(${dependency} "${cmake-flags}")
 			else()
-				message("${${dependency}.name} found")
+				message("${${dependency}.name} found ✔️")
 			endif()
 		else()
-			message("${${dependency}.name} found")
+			message("${${dependency}.name} found ✔️")
 		endif()
 	endforeach()
 endfunction()
@@ -709,11 +729,12 @@ endfunction()
 function(dependency_current_revision dependency return-value)
 	execute_process(
 		COMMAND ${GIT_EXECUTABLE} rev-parse HEAD
+		WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
 		OUTPUT_VARIABLE revision-current
 		RESULT_VARIABLE revision-current-result
 		ERROR_VARIABLE revision-current-error
-		WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
 		ERROR_QUIET
+		OUTPUT_QUIET
 	)
 	
 	if ("${revision-current-result}" EQUAL 0)
@@ -752,7 +773,8 @@ function(should_rebuild_dependency dependency test-build-cache return-value)
 		dependency_current_revision(${dependency} current-revision)
 		dependency_built_revision(${dependency} built-revision)
 		dependency_built_options(${dependency} built-options)
-		if("${current-revision}" STREQUAL "${built-revision}" AND "${built-options}" STREQUAL "${${dependency}.options}")
+		
+		if("${current-revision}" STREQUAL "${built-revision}" AND "${built-options}" STREQUAL "${${dependency}.options}" AND EXISTS ${library-path}/${current-profile}/${${dependency}.name})
 			set(${return-value} OFF PARENT_SCOPE)
 		else()
 			set(${return-value} ON PARENT_SCOPE)
@@ -818,6 +840,7 @@ function(check_branch_status dependency return-value)
 			OUTPUT_VARIABLE branch-result
 			WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
 			ERROR_QUIET
+			OUTPUT_QUIET
 		)
 		
 		string(REGEX REPLACE "\n$" "" branch-result "${branch-result}")
@@ -831,6 +854,7 @@ function(check_branch_status dependency return-value)
 			OUTPUT_VARIABLE branch-result
 			WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
 			ERROR_QUIET
+			OUTPUT_QUIET
 		)
 		
 		string(REGEX REPLACE "\n$" "" branch-result "${branch-result}")
@@ -891,6 +915,8 @@ function(update_local_dependency dependency test-build-cache cmake-flags)
 				COMMAND ${GIT_EXECUTABLE} pull ${recurse-argument}
 				OUTPUT_VARIABLE pull-result
 				WORKING_DIRECTORY "${sources-path}/${${dependency}.name}"
+				ERROR_QUIET
+				OUTPUT_QUIET
 			)
 			
 			dependency_current_revision(${dependency} pulled-revision)
@@ -970,7 +996,7 @@ endif()
 
 if(${CMAKE_ARGV3} STREQUAL "setup")
 	if(${CMAKE_ARGC} GREATER 4)
-		if(NOT "${CMAKE_ARGV4}" MATCHES "^\\-.*")
+		if(NOT "${CMAKE_ARGV4}" MATCHES "\\-.*")
 			select_profile(CMAKE_ARGV4)
 			set(cmake-arguments-starts 5)
 		else()
@@ -1010,7 +1036,7 @@ elseif(${CMAKE_ARGV3} STREQUAL "install")
 		message(FATAL_ERROR "Cannot read file \"${config-path}/${current-profile}-arguments.txt\". Run 'subgine-pkg setup' to create it.")
 	endif()
 	
-	update_dependency_list(manifest.dependencies ${cmake-arguments})
+	update_dependency_list(manifest.dependencies "${cmake-arguments}")
 elseif(${CMAKE_ARGV3} STREQUAL "update")
 	select_profile(CMAKE_ARGV4)
 	
