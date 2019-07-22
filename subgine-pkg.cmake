@@ -589,18 +589,14 @@ function(update_dependency dependency cmake-flags)
 		update_dependency_list(manifest_${${dependency}.name}.dependencies "${cmake-flags}")
 	endif()
 	
-	should_rebuild_dependency(${dependency} ASSUME_LOCAL should-rebuild)
+	should_rebuild_dependency(${dependency} ASSUME_LOCAL "${cmake-flags}" should-rebuild)
 	if(should-rebuild)
 		build_dependency(${dependency} "${cmake-flags}")
 	endif()
 endfunction()
 
-function(write_dependency_options_file dependency)
-	if(DEFINED ${dependency}.options)
-		file(WRITE "${sources-path}/${${dependency}.name}/${build-directory-name}/${config-suffix}/${built-options-file-name}" "${${dependency}.options}")
-	else()
-		file(REMOVE "${sources-path}/${${dependency}.name}/${build-directory-name}/${config-suffix}/${built-options-file-name}")
-	endif()
+function(write_dependency_options_file dependency cmake-flags)
+	file(WRITE "${sources-path}/${${dependency}.name}/${build-directory-name}/${config-suffix}/${built-options-file-name}" "${${dependency}.options};${cmake-flags}")
 endfunction()
 
 function(write_dependency_revision_file dependency)
@@ -608,10 +604,10 @@ function(write_dependency_revision_file dependency)
 	file(WRITE "${sources-path}/${${dependency}.name}/${build-directory-name}/${config-suffix}/${built-revision-file-name}" "${current-revision}")
 endfunction()
 
-function(dependency_cmake_options dependency)
+function(dependency_cmake_options dependency return-value)
 	set(cmake-options ${${dependency}.options})
 	separate_arguments(cmake-options)
-	set(dependency-cmake-options-${${dependency}.name} ${cmake-options} PARENT_SCOPE)
+	set(${return-value} ${cmake-options} PARENT_SCOPE)
 endfunction()
 
 function(dependency_build_additional_flags dependency return-value)
@@ -633,13 +629,13 @@ function(build_dependency dependency cmake-flags)
 		file(MAKE_DIRECTORY "${build-directory}")
 	endif()
 	
-	write_dependency_options_file(${dependency})
-	dependency_cmake_options(${dependency})
+	write_dependency_options_file(${dependency} "${cmake-flags}")
+	dependency_cmake_options(${dependency} cmake-options)
 	
 	execute_process(
 		COMMAND ${CMAKE_COMMAND} -G "${used-generator}" ${cmake-flags} -S "${sources-directory}" -B "${build-directory}"
 			-DCMAKE_PREFIX_PATH=${library-path}/${current-profile}
-			-DCMAKE_INSTALL_PREFIX=${library-path}/${config-suffix}/${${dependency}.name} ${dependency-cmake-options-${${dependency}.name}}
+			-DCMAKE_INSTALL_PREFIX=${library-path}/${config-suffix}/${${dependency}.name} ${cmake-options}
 			-DCMAKE_EXPORT_NO_PACKAGE_REGISTRY=ON
 		RESULT_VARIABLE result-build-dependency
 		ERROR_VARIABLE build-dependency-error
@@ -713,7 +709,7 @@ function(update_dependency_list dependency-list cmake-flags)
 			dependency_current_revision(${dependency} current-revision)
 			dependency_built_revision(${dependency} built-revision)
 			dependency_built_options(${dependency} built-options)
-			if(NOT "${built-options}" STREQUAL "${${dependency}.options}")
+			if(NOT "${built-options}" STREQUAL "${${dependency}.options};${cmake-flags}")
 				message("${${dependency}.name} options changed... rebuilding")
 				update_dependency(${dependency} "${cmake-flags}")
 			elseif(NOT "${current-revision}" STREQUAL "${built-revision}")
@@ -785,7 +781,7 @@ function(dependency_built_revision dependency return-value)
 	endif()
 endfunction()
 
-function(should_rebuild_dependency dependency test-build-cache return-value)
+function(should_rebuild_dependency dependency test-build-cache cmake-flags return-value)
 	if ("${test-build-cache}" STREQUAL "ASSUME_LOCAL")
 		set(is-local-dependency ON)
 	else()
@@ -797,7 +793,7 @@ function(should_rebuild_dependency dependency test-build-cache return-value)
 		dependency_built_revision(${dependency} built-revision)
 		dependency_built_options(${dependency} built-options)
 		
-		if("${current-revision}" STREQUAL "${built-revision}" AND "${built-options}" STREQUAL "${${dependency}.options}" AND EXISTS ${library-path}/${current-profile}/${${dependency}.name})
+		if("${current-revision}" STREQUAL "${built-revision}" AND "${built-options}" STREQUAL "${${dependency}.options};${cmake-flags}" AND EXISTS ${library-path}/${current-profile}/${${dependency}.name})
 			set(${return-value} OFF PARENT_SCOPE)
 		else()
 			set(${return-value} ON PARENT_SCOPE)
@@ -952,7 +948,7 @@ function(update_local_dependency dependency test-build-cache cmake-flags)
 			message("${${dependency}.name} options changed... rebuilding")
 		endif()
 		
-		should_rebuild_dependency(${dependency} ${test-build-cache} should-build)
+		should_rebuild_dependency(${dependency} ${test-build-cache} "${cmake-flags}" should-build)
 		if(should-build)
 			build_dependency(${dependency} "${cmake-flags}")
 		endif()
@@ -1045,11 +1041,12 @@ endif()
 
 if(${CMAKE_ARGV3} STREQUAL "setup")
 	if(${CMAKE_ARGC} GREATER 4)
-		if(NOT "${CMAKE_ARGV4}" MATCHES "\\-.*")
+		if("${CMAKE_ARGV4}" MATCHES "\\-.*")
+			set(current-profile "default")
+			set(cmake-arguments-starts 4)
+		else()
 			select_profile(CMAKE_ARGV4)
 			set(cmake-arguments-starts 5)
-		else()
-			set(cmake-arguments-starts 4)
 		endif()
 		
 		current_cmake_arguments(${cmake-arguments-starts} cmake-arguments)
