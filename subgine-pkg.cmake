@@ -626,20 +626,21 @@ function(dependency_build_additional_flags dependency return-value)
 endfunction()
 
 function(build_dependency dependency cmake-flags)
-	if(NOT IS_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}/${config-suffix}")
-		file(MAKE_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}/${config-suffix}")
+	set(build-directory "${sources-path}/${${dependency}.name}/${build-directory-name}/${config-suffix}")
+	set(sources-directory "${sources-path}/${${dependency}.name}")
+	
+	if(NOT IS_DIRECTORY "${build-directory}")
+		file(MAKE_DIRECTORY "${build-directory}")
 	endif()
 	
 	write_dependency_options_file(${dependency})
 	dependency_cmake_options(${dependency})
 	
 	execute_process(
-		COMMAND ${CMAKE_COMMAND} -G "${used-generator}" ../.. ${recursive-pkg-arg}
-			${cmake-flags}
+		COMMAND ${CMAKE_COMMAND} -G "${used-generator}" ${cmake-flags} -S "${sources-directory}" -B "${build-directory}"
 			-DCMAKE_PREFIX_PATH=${library-path}/${current-profile}
 			-DCMAKE_INSTALL_PREFIX=${library-path}/${config-suffix}/${${dependency}.name} ${dependency-cmake-options-${${dependency}.name}}
 			-DCMAKE_EXPORT_NO_PACKAGE_REGISTRY=ON
-		WORKING_DIRECTORY "${sources-path}/${${dependency}.name}/${build-directory-name}/${config-suffix}"
 		RESULT_VARIABLE result-build-dependency
 		ERROR_VARIABLE build-dependency-error
 		OUTPUT_QUIET
@@ -675,7 +676,7 @@ function(build_dependency dependency cmake-flags)
 		message(FATAL_ERROR "stopping due to previous errors")
 	endif()
 	
-	message(STATUS "Dependency ${${dependency}.name} installed")
+	message("Installed ${${dependency}.name} ✔️")
 	
 	check_dependency_exist(${dependency} "${cmake-flags}" dependency-${${dependency}.name}-exists)
 endfunction()
@@ -892,7 +893,7 @@ function(check_branch_status dependency return-value)
 endfunction()
 
 function(update_local_dependency dependency test-build-cache cmake-flags)
-	check_local_dependency(${dependency} ${test-build-cache} is-local-package SKIPPING_VERBOSE)
+	dependency_has_local_source_dir(${dependency} is-local-package)
 	
 	if(is-local-package)
 		check_branch_status(${dependency} should-checkout)
@@ -970,7 +971,7 @@ function(update_local_dependency dependency test-build-cache cmake-flags)
 			message(FATAL_ERROR "The manifest for dependency \"${${dependency}.name}\" does not contains dependencies or is invalid")
 		endif()
 		
-		update_local_dependency_list(manifest_${${dependency}.name}.dependencies)
+		update_local_dependency_list(manifest_${${dependency}.name}.dependencies "${cmake-flags}")
 	endif()
 endfunction()
 
