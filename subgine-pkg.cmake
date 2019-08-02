@@ -1053,7 +1053,18 @@ function(setup_profile dependency-list cmake-arguments)
 	set(scan-prefix-path "")
 	foreach(dependency-id ${${dependency-list}})
 		set(dependency ${dependency-list}_${dependency-id})
-		set(scan-prefix-path "${scan-prefix-path}\nfind_file(subgine-pkg-setup-file-${${dependency}.name} subgine-pkg-${${dependency}.name}-${current-profile}.cmake)\nif(NOT \"\${subgine-pkg-setup-file-${${dependency}.name}}\" STREQUAL \"subgine-pkg-setup-file-${${dependency}.name}-NOTFOUND\")\n\tinclude(\"\${subgine-pkg-setup-file-${${dependency}.name}}\")\n\tif(NOT \"\${found-pkg-${${dependency}.name}-prefix-path}\" STREQUAL \"\")\n\t\tlist(APPEND CMAKE_PREFIX_PATH \"\${found-pkg-${${dependency}.name}-prefix-path}\")\n\tendif()\n\tif(NOT \"\${found-pkg-${${dependency}.name}-module-path}\")\n\t\tlist(APPEND CMAKE_MODULE_PATH \"\${found-pkg-${${dependency}.name}-module-path}\")\n\tendif()\nendif()")
+		set(scan-prefix-path "${scan-prefix-path}
+
+find_file(subgine-pkg-setup-file-${${dependency}.name} subgine-pkg-${${dependency}.name}-${current-profile}.cmake)
+if(NOT \"\${subgine-pkg-setup-file-${${dependency}.name}}\" STREQUAL \"subgine-pkg-setup-file-${${dependency}.name}-NOTFOUND\")
+	include(\"\${subgine-pkg-setup-file-${${dependency}.name}}\")
+	if(NOT \"\${found-pkg-${${dependency}.name}-prefix-path}\" STREQUAL \"\")
+		list(APPEND CMAKE_PREFIX_PATH \"\${found-pkg-${${dependency}.name}-prefix-path}\")
+	endif()
+	if(NOT \"\${found-pkg-${${dependency}.name}-module-path}\" STREQUAL \"\")
+		list(APPEND CMAKE_MODULE_PATH \"\${found-pkg-${${dependency}.name}-module-path}\")
+	endif()
+endif()")
 	endforeach()
 	
 	file(WRITE "${installation-path}/${current-profile}-profile.cmake" "
