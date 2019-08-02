@@ -31,23 +31,11 @@ else()
 
 set(subgine-pkg-silent OFF)
 
-function(message)
+macro(message)
 	if(NOT subgine-pkg-silent)
 		_message(${ARGV})
 	endif()
-endfunction()
-
-set(current-profile "default")
-
-function(select_profile variable)
-	if(DEFINED ${variable})
-		set(current-profile "${${variable}}")
-	endif()
-endfunction()
-
-if(${CMAKE_ARGC} GREATER 4)
-	set(current-profile "${CMAKE_ARGV4}")
-endif()
+endmacro()
 
 #
 # Json Parser
@@ -400,6 +388,7 @@ set(build-directory-name "build")
 set(config-suffix "${current-profile}")
 set(built-options-file-name "subgine-pkg-options.txt")
 set(built-revision-file-name "subgine-pkg-revision.txt")
+set(current-profile "default")
 
 if (WIN32)
 	set(used-generator "Visual Studio 16 2019 Win64")
@@ -412,6 +401,34 @@ include(ProcessorCount)
 #
 # Dependency Functions
 #
+function(select_profile profile)
+	set(current-profile "${profile}")
+endfunction()
+
+function(select_profile_from_arg variable)
+	if(DEFINED ${variable})
+		select_profile("${${variable}}")
+	endif()
+endfunction()
+
+function(argument_value argument-variable cmake-arguments return-value)
+	set(test-project-path "${test-path}/extract-arguments")
+	file(WRITE "${test-project-path}/CMakeLists.txt" "cmake_minimum_required(VERSION 3.14)\nproject(extract-argument NONE)\nfile(WRITE \"./argument-result.txt\" \"\${${argument-variable}}\")")
+	execute_process(
+		COMMAND ${CMAKE_COMMAND} ${cmake-arguments} .
+		WORKING_DIRECTORY "${test-project-path}"
+		OUTPUT_QUIET
+		ERROR_QUIET
+		RESULT_VARIABLE failbit
+	)
+	
+	if (NOT ${failbit} EQUAL 0)
+		message("Cannot extract argument ${argument-variable} from command line, CMake subprocess failed with return code ${failbit}")
+	endif()
+	
+	file(READ "${test-project-path}/argument-result.txt" argument-result)
+	set(${return-value} "${argument-result}" PARENT_SCOPE)
+endfunction()
 
 function(version_from_tag tag return-value)
 	string(REGEX MATCH "^v" matches "${tag}")
@@ -483,22 +500,16 @@ function(check_dependency_exist dependency cmake-flags return-value)
 		set(target-cmake-check "")
 	endif()
 	
-	file(WRITE "${test-path}/subgine-package-file.cmake" "cmake_minimum_required(VERSION 3.14)\nunset(${${dependency}.name}_DIR CACHE)\n${cmake-module-path-command}\nlist(APPEND CMAKE_PREFIX_PATH \"${library-path}/${current-profile}/\")\nfind_file(sbg-package-config-file subgine-pkg-${${dependency}.name}-${current-profile}.cmake)\nmessage(\"\${sbg-package-config-file}\")")
-	
-	
+	file(WRITE "${test-path}/subgine-package-file.cmake" "cmake_minimum_required(VERSION 3.14)\nproject(testfindpackage CXX)\nlist(APPEND CMAKE_PREFIX_PATH \"${library-path}/${current-profile}/\")\nfind_file(sbg-package-config-file subgine-pkg-${${dependency}.name}-${current-profile}.cmake)\nmessage(\"\${sbg-package-config-file}\")")
+
 	execute_process(
 		COMMAND ${CMAKE_COMMAND} ${cmake-flags} -P "${test-path}/subgine-package-file.cmake"
 		ERROR_VARIABLE sbg-package-config-file
 		OUTPUT_QUIET
 	)
 	
+	set(check-module-paths "")
 	set(check-prefix-paths "${library-path}/${current-profile}")
-	
-	if(DEFINED manifest.cmake-module-path)
-		set(check-module-paths "${current-directory}/${manifest.cmake-module-path}")
-	else()
-		set(check-module-paths "")
-	endif()
 	
 	string(STRIP "${sbg-package-config-file}" sbg-package-config-file)
 	if(NOT "${sbg-package-config-file}" STREQUAL "sbg-package-config-file-NOTFOUND")
@@ -510,12 +521,10 @@ function(check_dependency_exist dependency cmake-flags return-value)
 	endif()
 	
 	if(NOT "${check-module-paths}" STREQUAL "")
-		set(cmake-module-path-command "list(APPEND CMAKE_MODULE_PATH \"${current-directory}/${manifest.cmake-module-path}\")")
-	else()
-		set(cmake-module-path-command "")
+		set(cmake-module-path-command "list(APPEND CMAKE_MODULE_PATH ${check-module-paths})")
 	endif()
 	
-	file(WRITE "${test-path}/CMakeLists.txt" "cmake_minimum_required(VERSION 3.14)\nunset(${${dependency}.name}_DIR CACHE)\n${cmake-module-path-command}\nlist(APPEND CMAKE_PREFIX_PATH \"${check-prefix-paths}\")\nfind_package(${${dependency}.name} ${cmake-version-check} ${dependency_component} REQUIRED)\n${target-cmake-check}")
+	file(WRITE "${test-path}/CMakeLists.txt" "cmake_minimum_required(VERSION 3.14)\nproject(testfindpackage CXX)\nunset(${${dependency}.name}_DIR CACHE)\n${cmake-module-path-command}\nlist(APPEND CMAKE_PREFIX_PATH ${check-prefix-paths})\nfind_package(${${dependency}.name} ${cmake-version-check} ${dependency_component} REQUIRED)\n${target-cmake-check}")
 	
 	execute_process(
 		COMMAND ${CMAKE_COMMAND} -G "${used-generator}" -DCMAKE_FIND_PACKAGE_NO_PACKAGE_REGISTRY=ON ${cmake-flags} -S "${test-path}" -B "${test-path}"
@@ -1003,13 +1012,35 @@ function(current_cmake_arguments starts-at return-value)
 	set(${return-value} ${cmake-arguments} PARENT_SCOPE)
 endfunction()
 
+function(list_to_absolute input-list return-value)
+	set(adapted-list "")
+	foreach(path ${input-list})
+		if(IS_ABSOLUTE ${path})
+			list(APPEND adapted-list "${path}")
+		else()
+			message("Warning: A prefix or a module path is containing a relative path\nThis can lead to disprancy between the path when building dependencies")
+			list(APPEND adapted-list "\${PROJECT_SOURCE_DIR}/${path}")
+		endif()
+	endforeach()
+	set(${return-value} "${adapted-list}" PARENT_SCOPE)
+endfunction()
+
 function(setup_profile dependency-list cmake-arguments)
-	if(DEFINED manifest.cmake-module-path)
-		set(module-path-setup "list(APPEND CMAKE_MODULE_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/${manifest.cmake-module-path}\")")
-		set(module-path-argument "-DCMAKE_MODULE_PATH=\"${current-directory}/${manifest.cmake-module-path}\"")
+	argument_value(CMAKE_MODULE_PATH "${cmake-arguments}" argument-module-path)
+	argument_value(CMAKE_PREFIX_PATH "${cmake-arguments}" argument-prefix-path)
+	
+	if(NOT "${argument-module-path}" STREQUAL "")
+		list_to_absolute("${argument-module-path}" adapted-module-path)
+		set(module-path-setup "list(APPEND CMAKE_MODULE_PATH ${adapted-module-path})")
 	else()
 		set(module-path-setup "")
-		set(module-path-argument "")
+	endif()
+	
+	if(NOT "${argument-prefix-path}" STREQUAL "")
+		list_to_absolute("${argument-prefix-path}" adapted-prefix-path)
+		set(prefix-path-setup "list(APPEND CMAKE_PREFIX_PATH ${adapted-prefix-path})")
+	else()
+		set(prefix-path-setup "")
 	endif()
 	
 	set(scan-prefix-path "")
@@ -1019,17 +1050,18 @@ function(setup_profile dependency-list cmake-arguments)
 	endforeach()
 	
 	file(WRITE "${installation-path}/${current-profile}-profile.cmake" "
+${module-path-setup}
+${prefix-path-setup}
 list(APPEND CMAKE_PREFIX_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/${manifest.installation-path}/${library-directory-name}/${current-profile}/\")
 
 ${scan-prefix-path}
 
 file(WRITE \"\${CMAKE_BINARY_DIR}/subgine-pkg-\${PROJECT_NAME}-${current-profile}.cmake\" \"
 set(found-pkg-\${PROJECT_NAME}-prefix-path \\\"\${CMAKE_PREFIX_PATH}\\\")
-set(found-pkg-\${PROJECT_NAME}-module-path \\\"${manifest.cmake-module-path}\\\")
+set(found-pkg-\${PROJECT_NAME}-module-path \\\"\${CMAKE_MODULE_PATH}\\\")
 set(found-pkg-\${PROJECT_NAME}-manifest-path \\\"\${CMAKE_SOURCE_DIR}/sbg-manifest.json\\\")\")
-
-${module-path-setup}\n")
-	file(WRITE "${config-path}/${current-profile}-arguments.txt" "${cmake-arguments};${module-path-argument}")
+\n")
+	file(WRITE "${config-path}/${current-profile}-arguments.txt" "${cmake-arguments}")
 endfunction()
 
 #
@@ -1039,14 +1071,15 @@ if(NOT "${manifest.dependencies._type}" STREQUAL "array")
 	message(FATAL_ERROR "The manifest must an an array 'dependencies' member of the root object")
 endif()
 
+select_profile("default")
+
 if(${CMAKE_ARGV3} STREQUAL "setup")
 	if(${CMAKE_ARGC} GREATER 4)
-		if("${CMAKE_ARGV4}" MATCHES "\\-.*")
-			set(current-profile "default")
-			set(cmake-arguments-starts 4)
-		else()
-			select_profile(CMAKE_ARGV4)
+		if(NOT "${CMAKE_ARGV4}" MATCHES "\\-.*")
+			select_profile_from_arg(CMAKE_ARGV4)
 			set(cmake-arguments-starts 5)
+		else()
+			set(cmake-arguments-starts 4)
 		endif()
 		
 		current_cmake_arguments(${cmake-arguments-starts} cmake-arguments)
@@ -1055,7 +1088,7 @@ if(${CMAKE_ARGV3} STREQUAL "setup")
 		message("Usage: subgine-pkg setup [<profile>] <cmake arguments...>")
 	endif()
 elseif(${CMAKE_ARGV3} STREQUAL "install")
-	select_profile(CMAKE_ARGV4)
+	select_profile_from_arg(CMAKE_ARGV4)
 	
 	if(EXISTS "${config-path}/${current-profile}-arguments.txt")
 		file(READ "${config-path}/${current-profile}-arguments.txt" cmake-arguments)
@@ -1065,7 +1098,7 @@ elseif(${CMAKE_ARGV3} STREQUAL "install")
 	
 	update_dependency_list(manifest.dependencies "${cmake-arguments}")
 elseif(${CMAKE_ARGV3} STREQUAL "update")
-	select_profile(CMAKE_ARGV4)
+	select_profile_from_arg(CMAKE_ARGV4)
 	
 	if(EXISTS "${config-path}/${current-profile}-arguments.txt")
 		file(READ "${config-path}/${current-profile}-arguments.txt" cmake-arguments)
