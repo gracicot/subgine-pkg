@@ -40,7 +40,10 @@ endmacro()
 #
 # Json Parser
 #
-
+# This section's code mostly taken from https://github.com/sbellus/json-cmake
+#
+# Thank you Stefan Bellus!
+#
 macro(ParseJson prefix jsonString)
 	cmake_policy(PUSH)
 
@@ -347,11 +350,15 @@ macro(_sbeMoveToNextNonEmptyCharacter)
 		endwhile()
 	endif()
 endmacro()
+#
+# End of Json Parser
+#
+
+# ----------------------
 
 #
 # Environement Validation
 #
-
 set(subgine-pkg-silent ON)
 find_package(Git REQUIRED)
 set(subgine-pkg-silent OFF)
