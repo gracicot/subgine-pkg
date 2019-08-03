@@ -392,16 +392,10 @@ set(sources-path "${installation-path}/${sources-directory-name}")
 set(library-path "${installation-path}/${library-directory-name}")
 set(config-path "${installation-path}/${config-directory-name}")
 set(build-directory-name "build")
-set(config-suffix "${current-profile}")
 set(built-options-file-name "subgine-pkg-options.txt")
 set(built-revision-file-name "subgine-pkg-revision.txt")
 set(current-profile "default")
-
-if (WIN32)
-	set(used-generator "Visual Studio 16 2019 Win64")
-else()
-	set(used-generator "Ninja")
-endif()
+set(config-suffix "${current-profile}")
 
 include(ProcessorCount)
 
@@ -507,7 +501,12 @@ function(check_dependency_exist dependency cmake-flags return-value)
 		set(target-cmake-check "")
 	endif()
 	
-	file(WRITE "${test-path}/subgine-package-file.cmake" "cmake_minimum_required(VERSION 3.14)\nproject(testfindpackage CXX)\nlist(APPEND CMAKE_PREFIX_PATH \"${library-path}/${current-profile}/\")\nfind_file(sbg-package-config-file subgine-pkg-${${dependency}.name}-${current-profile}.cmake)\nmessage(\"\${sbg-package-config-file}\")")
+	file(WRITE "${test-path}/subgine-package-file.cmake" "
+cmake_minimum_required(VERSION 3.14)
+
+list(APPEND CMAKE_PREFIX_PATH \"${library-path}/${current-profile}/\")
+find_file(sbg-package-config-file subgine-pkg-${${dependency}.name}-${current-profile}.cmake)
+message(\"\${sbg-package-config-file}\")")
 
 	execute_process(
 		COMMAND ${CMAKE_COMMAND} ${cmake-flags} -P "${test-path}/subgine-package-file.cmake"
@@ -534,7 +533,7 @@ function(check_dependency_exist dependency cmake-flags return-value)
 	file(WRITE "${test-path}/CMakeLists.txt" "cmake_minimum_required(VERSION 3.14)\nproject(testfindpackage CXX)\nunset(${${dependency}.name}_DIR CACHE)\n${cmake-module-path-command}\nlist(APPEND CMAKE_PREFIX_PATH ${check-prefix-paths})\nfind_package(${${dependency}.name} ${cmake-version-check} ${dependency_component} REQUIRED)\n${target-cmake-check}")
 	
 	execute_process(
-		COMMAND ${CMAKE_COMMAND} -G "${used-generator}" -DCMAKE_FIND_PACKAGE_NO_PACKAGE_REGISTRY=ON ${cmake-flags} -S "${test-path}" -B "${test-path}"
+		COMMAND ${CMAKE_COMMAND} -DCMAKE_FIND_PACKAGE_NO_PACKAGE_REGISTRY=ON ${cmake-flags} -S "${test-path}" -B "${test-path}"
 		RESULT_VARIABLE result-check-dep
 		OUTPUT_QUIET
 		ERROR_QUIET
@@ -649,9 +648,9 @@ function(build_dependency dependency cmake-flags)
 	dependency_cmake_options(${dependency} cmake-options)
 	
 	execute_process(
-		COMMAND ${CMAKE_COMMAND} -G "${used-generator}" ${cmake-flags} -S "${sources-directory}" -B "${build-directory}"
+		COMMAND ${CMAKE_COMMAND} ${cmake-flags} ${cmake-options} -S "${sources-directory}" -B "${build-directory}"
 			-DCMAKE_PREFIX_PATH=${library-path}/${current-profile}
-			-DCMAKE_INSTALL_PREFIX=${library-path}/${config-suffix}/${${dependency}.name} ${cmake-options}
+			-DCMAKE_INSTALL_PREFIX=${library-path}/${config-suffix}/${${dependency}.name}
 			-DCMAKE_EXPORT_NO_PACKAGE_REGISTRY=ON
 		RESULT_VARIABLE result-build-dependency
 		ERROR_VARIABLE build-dependency-error
@@ -662,8 +661,7 @@ function(build_dependency dependency cmake-flags)
 	
 	if (NOT ${result-build-dependency} EQUAL 0)
 		message("Dependency ${${dependency}.name} failed to configure... aborting")
-		message("Failed to configure with output:")
-		message("${build-dependency-error}")
+		message("Failed to configure with output:\n${build-dependency-error}")
 		message(FATAL_ERROR "stopping due to previous errors")
 	endif()
 	
@@ -683,8 +681,7 @@ function(build_dependency dependency cmake-flags)
 		write_dependency_revision_file(${dependency})
 	else()
 		message("Dependency ${${dependency}.name} failed to build... aborting")
-		message("Failed to build with output:")
-		message("${build-dependency-error}")
+		message("Failed to build with output:\n${build-dependency-error}")
 		message(FATAL_ERROR "stopping due to previous errors")
 	endif()
 	
