@@ -7,5 +7,5 @@ if [ ! -z "$CMAKE_PATH" ]
 then
     "$CMAKE_PATH/cmake" -P "$BASEDIR/subgine-pkg.cmake" "$@"
 else
-    cmake -P "$BASEDIR/subgine-pkg.cmake" $@
+    cmake -P "$BASEDIR/subgine-pkg.cmake" "$@"
 fi
