@@ -4,10 +4,7 @@ PREFIX?=/usr/local
 install: subgine-pkg
 	mkdir -p $(DESTDIR)$(PREFIX)/bin
 	cp subgine-pkg.cmake $(DESTDIR)$(PREFIX)/bin/
-	cp subgine-pkg /tmp/
-	sed -i "" 's|{%CMAKEPATH%}|""|g' /tmp/subgine-pkg
-	rm -f $(DESTDIR)$(PREFIX)/bin/subgine-pkg
-	mv /tmp/subgine-pkg $(DESTDIR)$(PREFIX)/bin/
+	sed 's|{%CMAKEPATH%}|""|g' subgine-pkg > $(DESTDIR)$(PREFIX)/bin/subgine-pkg
 	chmod 755 $(DESTDIR)$(PREFIX)/bin/subgine-pkg
 	
 .PHONY: uninstall
