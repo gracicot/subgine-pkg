@@ -1065,6 +1065,11 @@ endif()")
 	endforeach()
 	
 	file(WRITE "${installation-path}/${current-profile}-profile.cmake" "
+set(subgine-pkg-\${PROJECT_NAME} ON)
+set(subgine-pkg ON)
+set(subgine-pkg-\${PROJECT_NAME}-profile \"${current-profile}\")
+set(subgine-pkg-profile \"${current-profile}\")
+
 ${module-path-setup}
 ${prefix-path-setup}
 list(APPEND CMAKE_PREFIX_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/${manifest.installation-path}/${library-directory-name}/${current-profile}/\")
