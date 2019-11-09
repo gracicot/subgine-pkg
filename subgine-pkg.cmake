@@ -402,15 +402,16 @@ include(ProcessorCount)
 #
 # Dependency Functions
 #
-function(select_profile profile)
+macro(select_profile profile)
 	set(current-profile "${profile}")
-endfunction()
+	set(config-suffix "${current-profile}")
+endmacro()
 
-function(select_profile_from_arg variable)
+macro(select_profile_from_arg variable)
 	if(DEFINED ${variable})
 		select_profile("${${variable}}")
 	endif()
-endfunction()
+endmacro()
 
 function(argument_value argument-variable cmake-arguments return-value)
 	set(test-project-path "${test-path}/extract-arguments")
