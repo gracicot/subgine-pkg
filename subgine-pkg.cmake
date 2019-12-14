@@ -647,11 +647,10 @@ function(build_dependency dependency cmake-flags)
 	
 	write_dependency_options_file(${dependency} "${cmake-flags}")
 	dependency_cmake_options(${dependency} cmake-options)
-	
 	execute_process(
-		COMMAND ${CMAKE_COMMAND} ${cmake-flags} ${cmake-options} -S "${sources-directory}" -B "${build-directory}"
-			-DCMAKE_PREFIX_PATH=${library-path}/${current-profile}
+		COMMAND ${CMAKE_COMMAND} ${cmake-flags} -Dsubgine-pkg-as-dependency=ON ${cmake-options} -S "${sources-directory}" -B "${build-directory}"
 			-DCMAKE_INSTALL_PREFIX=${library-path}/${config-suffix}/${${dependency}.name}
+			-DCMAKE_PROJECT_INCLUDE=${config-path}/${current-profile}-add-prefix-path.cmake
 			-DCMAKE_EXPORT_NO_PACKAGE_REGISTRY=ON
 		RESULT_VARIABLE result-build-dependency
 		ERROR_VARIABLE build-dependency-error
@@ -1036,14 +1035,14 @@ function(setup_profile dependency-list cmake-arguments)
 	
 	if(NOT "${argument-module-path}" STREQUAL "")
 		list_to_absolute("${argument-module-path}" adapted-module-path)
-		set(module-path-setup "list(APPEND CMAKE_MODULE_PATH ${adapted-module-path})")
+		set(module-path-setup "list(APPEND CMAKE_MODULE_PATH \"${adapted-module-path}\")")
 	else()
 		set(module-path-setup "")
 	endif()
 	
 	if(NOT "${argument-prefix-path}" STREQUAL "")
 		list_to_absolute("${argument-prefix-path}" adapted-prefix-path)
-		set(prefix-path-setup "list(APPEND CMAKE_PREFIX_PATH ${adapted-prefix-path})")
+		set(prefix-path-setup "list(APPEND CMAKE_PREFIX_PATH \"${adapted-prefix-path}\")")
 	else()
 		set(prefix-path-setup "")
 	endif()
@@ -1073,7 +1072,7 @@ set(subgine-pkg-profile \"${current-profile}\")
 
 ${module-path-setup}
 ${prefix-path-setup}
-list(APPEND CMAKE_PREFIX_PATH \"\${CMAKE_CURRENT_SOURCE_DIR}/${manifest.installation-path}/${library-directory-name}/${current-profile}/\")
+list(APPEND CMAKE_PREFIX_PATH \"\${PROJECT_SOURCE_DIR}/${manifest.installation-path}/${library-directory-name}/${current-profile}/\")
 
 ${scan-prefix-path}
 
@@ -1083,6 +1082,7 @@ set(found-pkg-\${PROJECT_NAME}-module-path \\\"\${CMAKE_MODULE_PATH}\\\")
 set(found-pkg-\${PROJECT_NAME}-manifest-path \\\"\${CMAKE_SOURCE_DIR}/sbg-manifest.json\\\")\")
 \n")
 	file(WRITE "${config-path}/${current-profile}-arguments.txt" "${cmake-arguments}")
+	file(WRITE "${config-path}/${current-profile}-add-prefix-path.cmake" "list(APPEND CMAKE_PREFIX_PATH \"\${CMAKE_SOURCE_DIR}/../../${library-directory-name}/${current-profile}/\")")
 endfunction()
 
 #
