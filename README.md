@@ -1,5 +1,7 @@
 # subgine-pkg
 
+[![Join the chat at https://gitter.im/gracicot/subgine-pkg](https://badges.gitter.im/gracicot/subgine-pkg.svg)](https://gitter.im/gracicot/subgine-pkg?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
+
 The subgine package manager. A proof of concept package manager we used in our game engine named subgine.
 
 Can resolve dependencies recursively. Does not attempt to solve the diamond problem for the moment.
@@ -33,3 +35,5 @@ Here's an example `sbg-manifest.json` file:
   ]
 }
 ```
+
+Try it using the [user test sample](https://github.com/gracicot/subgine-pkg-user-test).
