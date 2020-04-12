@@ -2,7 +2,7 @@
 AppName=Subgine Package Manager
 ArchitecturesInstallIn64BitMode=x64
 DefaultDirName={pf}\Subgine Package Manager
-AppVersion=0.0.1
+AppVersion=0.2
 ChangesEnvironment=yes
 UninstallFilesDir={app}\uninstall
 OutputBaseFilename=subgine-pkg-setup
