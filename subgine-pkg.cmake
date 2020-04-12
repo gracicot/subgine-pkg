@@ -413,8 +413,9 @@ macro(select_profile_from_arg variable)
 	endif()
 endmacro()
 
+# This function extract an argument value in the form of -DARGUMENT=VALUE
 function(argument_value argument-variable cmake-arguments return-value)
-	set(test-project-path "${test-path}/extract-arguments")
+	set(test-project-path "${test-path}/.extract-arguments")
 	file(WRITE "${test-project-path}/CMakeLists.txt" "cmake_minimum_required(VERSION 3.14)\nproject(extract-argument NONE)\nfile(WRITE \"./argument-result.txt\" \"\${${argument-variable}}\")")
 	execute_process(
 		COMMAND ${CMAKE_COMMAND} ${cmake-arguments} .
@@ -425,13 +426,14 @@ function(argument_value argument-variable cmake-arguments return-value)
 	)
 	
 	if (NOT ${failbit} EQUAL 0)
-		message("Cannot extract argument ${argument-variable} from command line, CMake subprocess failed with return code ${failbit}")
+		message(FATAL_ERROR "Cannot extract argument ${argument-variable} from command line, CMake subprocess failed with return code ${failbit}")
 	endif()
 	
 	file(READ "${test-project-path}/argument-result.txt" argument-result)
 	set(${return-value} "${argument-result}" PARENT_SCOPE)
 endfunction()
 
+# This function simply remove the `v` from the tag to get the version number
 function(version_from_tag tag return-value)
 	string(REGEX MATCH "^v" matches "${tag}")
 		
@@ -443,6 +445,7 @@ function(version_from_tag tag return-value)
 	endif()
 endfunction()
 
+# This function generate the string for the version string we put in the `find_package` command
 function(dependency_cmake_version_check dependency return-value)
 	if (NOT ${dependency}.ignore-version)
 		if(DEFINED ${dependency}.version)
@@ -467,6 +470,8 @@ function(dependency_cmake_version_check dependency return-value)
 	endif()
 endfunction()
 
+# This function validate the json object of a dependency.
+# It must have a name, a repository, and a tag or a branch
 function(assert_dependency_json_valid dependency)
 	if(NOT DEFINED ${dependency}.name)
 		message(FATAL_ERROR "The dependency '${dependency}' must have a name")
@@ -479,7 +484,20 @@ function(assert_dependency_json_valid dependency)
 	endif()
 endfunction()
 
+# This function clear the cache if the arguments have changed
+function(clean_test_project_if_needed profile cmake-arguments)
+	if(EXISTS "${test-path}/${profile}/last-arguments.txt")
+		file(READ "${test-path}/${profile}/last-arguments.txt" last-cmake-arguments)
+		if (NOT "${cmake-arguments}" STREQUAL "${last-cmake-arguments}")
+			file(REMOVE_RECURSE "${test-path}/${profile}")
+			file(MAKE_DIRECTORY "${test-path}/${profile}")
+		endif()
+	endif()
+endfunction()
+
+# This function check if a dependency is available with the current configuration and CMake flags
 function(check_dependency_exist dependency cmake-flags return-value)
+	set(profile-test-path "${test-path}/${current-profile}")
 	if (NOT IS_DIRECTORY "${installation-path}")
 		file(MAKE_DIRECTORY "${installation-path}")
 	endif()
@@ -488,21 +506,16 @@ function(check_dependency_exist dependency cmake-flags return-value)
 		file(MAKE_DIRECTORY "${test-path}")
 	endif()
 	
-	dependency_cmake_version_check(${dependency} cmake-version-check)
-	
-	if (DEFINED ${dependency}.component)
-		set(dependency_component "COMPONENTS ${${dependency}.component}")
-	else()
-		set(dependency_component "")
+	if (NOT IS_DIRECTORY "${profile-test-path}")
+		file(MAKE_DIRECTORY "${profile-test-path}")
 	endif()
 	
-	if (DEFINED ${dependency}.target)
-		set(target-cmake-check "if(TARGET ${${dependency}.target})\nelse()\nmessage(SEND_ERROR \"Package ${${dependency}.name} not found\")\nendif()")
-	else()
-		set(target-cmake-check "")
-	endif()
+	# We cleanup previous cache so we are not affected by it when we change the arguments passed ot a profile
+	clean_test_project_if_needed("${current-profile}" "${cmake-flags}")
 	
-	file(WRITE "${test-path}/subgine-package-file.cmake" "
+	# The following will try to find a subgine metadata file so we get
+	# all the required module path and prefix path to find the dependency and its dependencies.
+	file(WRITE "${profile-test-path}/subgine-package-file.cmake" "
 cmake_minimum_required(VERSION 3.14)
 
 list(APPEND CMAKE_PREFIX_PATH \"${library-path}/${current-profile}/\")
@@ -510,7 +523,7 @@ find_file(sbg-package-config-file subgine-pkg-${${dependency}.name}-${current-pr
 message(\"\${sbg-package-config-file}\")")
 
 	execute_process(
-		COMMAND ${CMAKE_COMMAND} ${cmake-flags} -P "${test-path}/subgine-package-file.cmake"
+		COMMAND ${CMAKE_COMMAND} ${cmake-flags} -P "${profile-test-path}/subgine-package-file.cmake"
 		ERROR_VARIABLE sbg-package-config-file
 		OUTPUT_QUIET
 	)
@@ -531,14 +544,32 @@ message(\"\${sbg-package-config-file}\")")
 		set(cmake-module-path-command "list(APPEND CMAKE_MODULE_PATH ${check-module-paths})")
 	endif()
 	
-	file(WRITE "${test-path}/CMakeLists.txt" "cmake_minimum_required(VERSION 3.14)\nproject(testfindpackage CXX)\nunset(${${dependency}.name}_DIR CACHE)\n${cmake-module-path-command}\nlist(APPEND CMAKE_PREFIX_PATH ${check-prefix-paths})\nfind_package(${${dependency}.name} ${cmake-version-check} ${dependency_component} REQUIRED)\n${target-cmake-check}")
+	# Finally, we generate the CMake project file and try to run it
+	dependency_cmake_version_check(${dependency} cmake-version-check)
+	
+	if (DEFINED ${dependency}.component)
+		set(dependency_component "COMPONENTS ${${dependency}.component}")
+	else()
+		set(dependency_component "")
+	endif()
+	
+	if (DEFINED ${dependency}.target)
+		set(target-cmake-check "if(TARGET ${${dependency}.target})\nelse()\nmessage(SEND_ERROR \"Package ${${dependency}.name} not found\")\nendif()")
+	else()
+		set(target-cmake-check "")
+	endif()
+	
+	file(WRITE "${profile-test-path}/CMakeLists.txt" "cmake_minimum_required(VERSION 3.14)\nproject(testfindpackage CXX)\nunset(${${dependency}.name}_DIR CACHE)\n${cmake-module-path-command}\nlist(APPEND CMAKE_PREFIX_PATH ${check-prefix-paths})\nfind_package(${${dependency}.name} ${cmake-version-check} ${dependency_component} REQUIRED)\n${target-cmake-check}")
 	
 	execute_process(
-		COMMAND ${CMAKE_COMMAND} -DCMAKE_FIND_PACKAGE_NO_PACKAGE_REGISTRY=ON ${cmake-flags} -S "${test-path}" -B "${test-path}"
+		COMMAND ${CMAKE_COMMAND} -DCMAKE_FIND_PACKAGE_NO_PACKAGE_REGISTRY=ON ${cmake-flags} -S "${profile-test-path}" -B "${profile-test-path}"
 		RESULT_VARIABLE result-check-dep
 		OUTPUT_QUIET
 		ERROR_QUIET
 	)
+	
+	# We ran the test, so we write the arguments for the next run
+	file(WRITE "${profile-test-path}/last-arguments.txt" "${cmake-flags}")
 	
 	if (${result-check-dep} EQUAL 0)
 		set(${return-value} ON PARENT_SCOPE)
@@ -709,8 +740,6 @@ function(update_dependency_list dependency-list cmake-flags)
 		check_dependency_exist(${dependency} "${cmake-flags}" dependency-${${dependency}.name}-exists)
 	endforeach()
 	
-	file(READ "${test-path}/CMakeCache.txt" test-cache)
-	
 	foreach(dependency-id ${${dependency-list}})
 		set(dependency ${dependency-list}_${dependency-id})
 		
@@ -748,7 +777,7 @@ function(update_local_dependency_list dependency-list cmake-flags)
 		check_dependency_exist(${dependency} "${cmake-flags}" dependency-${${dependency}.name}-exists)
 	endforeach()
 
-	file(READ "${test-path}/CMakeCache.txt" test-cache)
+	file(READ "${test-path}/${current-profile}/CMakeCache.txt" test-cache)
 
 	foreach(dependency-id ${${dependency-list}})
 		set(dependency ${dependency-list}_${dependency-id})
