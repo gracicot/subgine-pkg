@@ -33,3 +33,5 @@ Here's an example `sbg-manifest.json` file:
   ]
 }
 ```
+
+Try it using the [user test sample](https://github.com/gracicot/subgine-pkg-user-test).
