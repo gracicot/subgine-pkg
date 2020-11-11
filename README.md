@@ -6,6 +6,8 @@ The subgine package manager. A proof of concept package manager we used in our g
 
 Can resolve dependencies recursively. Does not attempt to solve the diamond problem for the moment.
 
+Explanation of implementation in this blog post: [I made a package manager using CMake](https://gracicot.github.io/cmake/2020/04/09/i-made-a-package-manager-using-cmake.html)
+
 Here's an example `sbg-manifest.json` file:
 
 ```json
