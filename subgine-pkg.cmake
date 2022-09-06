@@ -687,7 +687,6 @@ function(build_dependency dependency cmake-flags)
 		file(MAKE_DIRECTORY "${build-directory}")
 	endif()
 	
-	write_dependency_options_file(${dependency} "${cmake-flags}")
 	dependency_cmake_options(${dependency} cmake-options)
 	execute_process(
 		COMMAND ${CMAKE_COMMAND} ${cmake-flags} -Dsubgine-pkg-as-dependency=ON 
@@ -726,6 +725,7 @@ function(build_dependency dependency cmake-flags)
 	
 	if (${result-build-dependency} EQUAL 0)
 		write_dependency_revision_file(${dependency})
+		write_dependency_options_file(${dependency} "${cmake-flags}")
 	else()
 		message("Dependency ${${dependency}.name} failed to build... aborting")
 		message("Failed to build with output:\n${build-dependency-error}")
